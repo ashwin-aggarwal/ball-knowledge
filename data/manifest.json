@@ -1,0 +1,31 @@
+{
+  "built_at": "2026-09-15T01:37:41.585131+00:00",
+  "candidate_pool_size": 25,
+  "row_counts": {
+    "career_totals": 25,
+    "career_per_game": 25,
+    "season_records": 304,
+    "players": 25
+  },
+  "season_coverage": {
+    "min_season": "1981-82",
+    "max_season": "2007-08"
+  },
+  "endpoints_used": [
+    "nba_api.stats.endpoints.alltimeleadersgrids.AllTimeLeadersGrids",
+    "nba_api.stats.endpoints.playercareerstats.PlayerCareerStats",
+    "nba_api.stats.static.players.get_players"
+  ],
+  "era_caveats": {
+    "oreb": "Offensive rebounds have been tracked since 1973-74.",
+    "dreb": "Defensive rebounds have been tracked since 1973-74.",
+    "stl": "Steals have been tracked since 1973-74.",
+    "blk": "Blocks have been tracked since 1973-74.",
+    "tov": "Turnovers have been tracked since 1977-78.",
+    "fg3m": "Three pointers made have been tracked since 1979-80.",
+    "fg3a": "Three pointers attempted have been tracked since 1979-80."
+  },
+  "network_calls": 0,
+  "cache_hits": 26,
+  "permanent_failures": []
+}
