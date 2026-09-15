@@ -6,7 +6,7 @@ import traceback
 import streamlit as st
 
 from ball_knowledge import state
-from ball_knowledge.config import DEFAULT_GAME_CONFIG
+from ball_knowledge.config import DEFAULT_GAME_CONFIG, DatasetScope
 from ball_knowledge.data import eligible_players_for_question
 from ball_knowledge.scoring import GuessInput
 from ball_knowledge.state import Phase
@@ -18,19 +18,25 @@ state.init_state()
 
 def render_lobby() -> None:
     st.title("ball-knowledge")
-    st.write("Enter 2-8 player names, then start the game.")
-    num_players = st.number_input("Number of players", min_value=2, max_value=8, value=4, step=1)
+    cfg = DEFAULT_GAME_CONFIG
+    st.write(
+        f"Enter {cfg.min_players}-{cfg.max_players} player names (solo play works too), "
+        "then start the game."
+    )
+    num_players = st.number_input(
+        "Number of players", min_value=cfg.min_players, max_value=cfg.max_players, value=4, step=1
+    )
     names = [
         st.text_input(f"Player {i + 1} name", key=f"lobby_name_{i}")
         for i in range(int(num_players))
     ]
     num_rounds = st.number_input(
-        "Number of rounds", min_value=1, max_value=50, value=DEFAULT_GAME_CONFIG.default_rounds
+        "Number of rounds", min_value=1, max_value=50, value=cfg.default_rounds
     )
     if st.button("Start game"):
         clean_names = [n.strip() for n in names if n.strip()]
-        if len(clean_names) < 2:
-            st.error("Need at least 2 players.")
+        if len(clean_names) < cfg.min_players:
+            st.error(f"Need at least {cfg.min_players} player.")
         elif len(clean_names) != len(set(clean_names)):
             st.error("Player names must be unique.")
         else:
@@ -62,6 +68,10 @@ def render_collect() -> None:
     guesser = state.current_guesser()
     st.header(f"{guesser}'s guess")
     st.write(q.question_text)
+    if q.scope is DatasetScope.SEASON_RECORD:
+        st.caption(
+            "Each player is scored on their own best qualifying season for this stat."
+        )
     pool = eligible_players_for_question(q, state.tables())
     options = pool["full_name"].tolist()
     # Keying by (collect_index, clear_nonce) guarantees a fresh widget for

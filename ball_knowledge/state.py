@@ -73,7 +73,8 @@ def _start_new_round() -> None:
     )
     ss.used_question_keys.add(ss.current_question.key)
     ss.collect_index = 0
-    ss.collect_gate_shown = True
+    # Solo play has no one to hand the laptop to, so skip the gate screen.
+    ss.collect_gate_shown = len(ss.players) > 1
     ss.guess_clear_nonce = 0
     ss.guesses = {}
     ss.last_scored = []

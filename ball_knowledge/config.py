@@ -132,7 +132,7 @@ class DatasetConfig:
 class GameConfig:
     """Knobs the app or a difficulty preset can override at LOBBY time."""
 
-    min_players: int = 2
+    min_players: int = 1  # solo play is supported: your closest (only) guess always scores
     max_players: int = 8
     default_rounds: int = 10
     round_points: int = 1

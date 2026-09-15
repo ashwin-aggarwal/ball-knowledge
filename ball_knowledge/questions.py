@@ -219,9 +219,35 @@ def generate_question(
     )
 
 
+def dedupe_best_per_player(pool: pd.DataFrame) -> pd.DataFrame:
+    """Collapse a ranked pool to one row per player: their best (lowest) rank.
+
+    career_totals/career_per_game already have exactly one row per player,
+    so this is a no-op there. season_records has one row per player-season,
+    so a prolific player can otherwise appear many times over (once per
+    qualifying season) in a guess dropdown built from the raw pool.
+    """
+    if pool.empty:
+        return pool
+    best = pool.sort_values("rank").groupby("player_id", as_index=False).first()
+    return best.sort_values("rank").reset_index(drop=True)
+
+
 def eligible_players_for_question(question: Question, tables: DataTables) -> pd.DataFrame:
-    """The guess pool for `question`: same filter used to pick its answer."""
+    """The guess pool for `question`: one entry per player, no duplicates.
+
+    For SEASON_RECORD questions this deliberately differs from the pool
+    used to pick the answer (which must consider every qualifying season,
+    since the same player can legitimately occupy multiple all-time
+    single-season ranks). A guess, though, is one player with one value:
+    their own best qualifying season for this stat (see
+    dedupe_best_per_player), matching the brief's "a guessed player's
+    value is their own best qualifying season" rule.
+    """
     table = tables.stat_table(question.scope)
-    return eligible_pool(
+    pool = eligible_pool(
         table, tables.players, value_col=question.value_col, min_games=question.min_games
     )
+    if question.scope is DatasetScope.SEASON_RECORD:
+        pool = dedupe_best_per_player(pool)
+    return pool
