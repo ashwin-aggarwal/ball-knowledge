@@ -10,7 +10,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from ball_knowledge.config import STATS, DatasetScope, GameConfig, RankRange, ValueKind
+from ball_knowledge.config import STATS, GameConfig, RankRange
 from ball_knowledge.questions import DataTables
 
 STAT_KEYS = list(STATS.keys())
@@ -54,22 +54,6 @@ def _per_game_row(player_id: int) -> dict:
     return row
 
 
-def _season_rows(player_id: int) -> list[dict]:
-    rows = []
-    for season, gp, scale in (("2020-21", 70, 0.5), ("2021-22", 20, 0.6)):
-        row: dict = {"player_id": player_id, "season": season, "gp": gp}
-        for idx, key in enumerate(STAT_KEYS):
-            if player_id == OLD_TIMER_ID and key in ERA_UNTRACKED_STATS:
-                row[f"{key}_total"] = None
-                row[f"{key}_per_game"] = None
-            else:
-                total = round(((9 - player_id) * 100 + idx) * scale, 2)
-                row[f"{key}_total"] = total
-                row[f"{key}_per_game"] = round(total / gp, 3)
-        rows.append(row)
-    return rows
-
-
 @pytest.fixture
 def tables() -> DataTables:
     players = pd.DataFrame(
@@ -84,13 +68,9 @@ def tables() -> DataTables:
     )
     career_totals = pd.DataFrame([_totals_row(pid) for pid in PLAYER_IDS])
     career_per_game = pd.DataFrame([_per_game_row(pid) for pid in PLAYER_IDS])
-    season_records = pd.DataFrame(
-        [row for pid in PLAYER_IDS for row in _season_rows(pid)]
-    )
     return DataTables(
         career_totals=career_totals,
         career_per_game=career_per_game,
-        season_records=season_records,
         players=players,
     )
 
@@ -99,15 +79,12 @@ def tables() -> DataTables:
 def small_game_config() -> GameConfig:
     """A GameConfig whose thresholds fit the 8-player fixture above.
 
-    Real defaults (400 career games, 58 qualifying season games) would
-    filter out every synthetic player, since the fixture only has 8 rows
-    total. Rank ranges are similarly narrowed to what the fixture supports.
+    The real default (400 career games) would filter out every synthetic
+    player, since the fixture only has 8 rows total. Rank range is
+    similarly narrowed to what the fixture supports.
     """
     return GameConfig(
         career_per_game_min_games=400,  # players 7-8 (gp=200) intentionally excluded
-        season_per_game_min_games=50,  # the 2021-22 row (gp=20) intentionally excluded
-        season_total_min_games=1,
         career_total_ranks=RankRange(low=1, high=8, skew=1.0),
         career_per_game_ranks=RankRange(low=1, high=8, skew=1.0),
-        season_record_ranks=RankRange(low=1, high=8, skew=1.0),
     )

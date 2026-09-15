@@ -2,9 +2,8 @@ import random
 
 import pytest
 
-from ball_knowledge.config import DatasetScope, GameConfig, RankRange, ValueKind
+from ball_knowledge.config import DatasetScope, GameConfig, RankRange
 from ball_knowledge.questions import (
-    dedupe_best_per_player,
     eligible_players_for_question,
     eligible_pool,
     generate_question,
@@ -56,52 +55,6 @@ def test_eligible_pool_ties_share_rank_and_skip_next() -> None:
     assert ranks[3] == 3  # rank 2 is skipped after the tie
 
 
-def test_season_record_guess_pool_has_no_duplicate_players(tables, small_game_config) -> None:
-    # value_kind=TOTAL: both season rows qualify (season_total_min_games=1),
-    # so the raw ranked pool has 2 rows per player...
-    raw_pool = eligible_pool(
-        tables.season_records, tables.players, value_col="pts_total", min_games=1
-    )
-    assert len(raw_pool) == 16  # 8 players x 2 qualifying seasons each
-    assert raw_pool["player_id"].duplicated().any()
-
-    # ...but the guess pool must dedupe to one entry per player.
-    guess_pool = dedupe_best_per_player(raw_pool)
-    assert not guess_pool["player_id"].duplicated().any()
-    assert len(guess_pool) == 8
-
-
-def test_season_record_guess_pool_keeps_best_season_value(tables, small_game_config) -> None:
-    raw_pool = eligible_pool(
-        tables.season_records, tables.players, value_col="pts_total", min_games=1
-    )
-    guess_pool = dedupe_best_per_player(raw_pool)
-    for _, row in guess_pool.iterrows():
-        player_rows = raw_pool[raw_pool["player_id"] == row["player_id"]]
-        assert row["value"] == player_rows["value"].max()
-        assert row["rank"] == player_rows["rank"].min()
-
-
-def test_eligible_players_for_question_dedupes_for_season_record(tables) -> None:
-    config = GameConfig(
-        dataset_weights={
-            DatasetScope.CAREER_TOTAL: 0.0,
-            DatasetScope.CAREER_PER_GAME: 0.0,
-            DatasetScope.SEASON_RECORD: 1.0,
-        },
-        season_record_ranks=RankRange(low=1, high=16, skew=1.0),
-        season_total_min_games=1,
-        season_per_game_min_games=50,
-        season_value_kind_weights={ValueKind.TOTAL: 1.0, ValueKind.PER_GAME: 0.0},
-    )
-    rng = random.Random(5)
-    q = generate_question(tables, config, used_keys=set(), rng=rng)
-    guess_pool = eligible_players_for_question(q, tables)
-    assert not guess_pool["player_id"].duplicated().any()
-    # The answer must still be reachable through the deduped guess pool.
-    assert q.answer_player_id in set(guess_pool["player_id"])
-
-
 def test_generate_question_basic_fields(tables, small_game_config) -> None:
     rng = random.Random(0)
     q = generate_question(tables, small_game_config, used_keys=set(), rng=rng)
@@ -129,13 +82,12 @@ def test_generate_question_raises_when_space_exhausted(tables) -> None:
         dataset_weights={
             DatasetScope.CAREER_TOTAL: 1.0,
             DatasetScope.CAREER_PER_GAME: 0.0,
-            DatasetScope.SEASON_RECORD: 0.0,
         },
         career_total_stats=("pts",),
         career_total_ranks=RankRange(low=1, high=1, skew=1.0),
     )
     rng = random.Random(2)
-    used = {(DatasetScope.CAREER_TOTAL.value, ValueKind.TOTAL.value, "pts", 1)}
+    used = {(DatasetScope.CAREER_TOTAL.value, "pts", 1)}
     with pytest.raises(RuntimeError):
         generate_question(tables, tiny_config, used_keys=used, rng=rng)
 
@@ -166,23 +118,6 @@ def test_eligible_players_for_question_matches_answer_pool(tables, small_game_co
     match = pool[pool["player_id"] == q.answer_player_id].iloc[0]
     assert match["value"] == q.answer_value
     assert match["rank"] == q.target_rank
-
-
-def test_season_record_question_carries_answer_season(tables) -> None:
-    config = GameConfig(
-        dataset_weights={
-            DatasetScope.CAREER_TOTAL: 0.0,
-            DatasetScope.CAREER_PER_GAME: 0.0,
-            DatasetScope.SEASON_RECORD: 1.0,
-        },
-        season_record_ranks=RankRange(low=1, high=8, skew=1.0),
-        season_total_min_games=1,
-        season_per_game_min_games=50,
-    )
-    rng = random.Random(4)
-    q = generate_question(tables, config, used_keys=set(), rng=rng)
-    assert q.scope is DatasetScope.SEASON_RECORD
-    assert q.answer_season in ("2020-21", "2021-22")
 
 
 def test_resolve_player_by_name_exact_case_insensitive(tables) -> None:
@@ -217,17 +152,13 @@ def test_resolve_guess_value_and_rank_for_ineligible_player_is_worse_than_worst(
 ) -> None:
     # Career per-game requires 400+ games; players 7 and 8 (gp=200) don't
     # qualify but must still resolve to *some* (worse) rank, not crash.
-    from ball_knowledge.config import DatasetScope as DS
-
-    config = small_game_config
-    dataset_config = config.dataset_config(DS.CAREER_PER_GAME)
+    dataset_config = small_game_config.dataset_config(DatasetScope.CAREER_PER_GAME)
     q = generate_question(
         tables,
         GameConfig(
             dataset_weights={
                 DatasetScope.CAREER_TOTAL: 0.0,
                 DatasetScope.CAREER_PER_GAME: 1.0,
-                DatasetScope.SEASON_RECORD: 0.0,
             },
             career_per_game_stats=("pts",),
             career_per_game_ranks=dataset_config.rank_range,

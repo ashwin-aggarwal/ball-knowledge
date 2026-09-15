@@ -87,11 +87,9 @@ def render_card_front(
     player_name: str,
     value_display: str,
     rank_display: str,
-    season: str | None,
 ) -> None:
     """Reveal screen: the card front, photo and name and stat revealed."""
     photo_html = _photo_html(player_id, player_name)
-    season_html = f'<div class="bk-season-tag">{season}</div>' if season else ""
     _markdown(
         f"""
         <div class="bk-stage">
@@ -102,7 +100,6 @@ def render_card_front(
               <div class="bk-stat-callout">{value_display}
                 <span class="bk-rank-badge">{rank_display}</span>
               </div>
-              {season_html}
             </div>
           </div>
         </div>

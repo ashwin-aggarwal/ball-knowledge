@@ -111,47 +111,38 @@ def main() -> None:
     print("Loading parquet files...")
     career_totals = pd.read_parquet(DATA_PATH / "career_totals.parquet")
     career_per_game = pd.read_parquet(DATA_PATH / "career_per_game.parquet")
-    season_records = pd.read_parquet(DATA_PATH / "season_records.parquet")
     players = pd.read_parquet(DATA_PATH / "players.parquet")
 
     total_cols = [f"{k}_total" for k in STATS]
-    per_game_cols = [f"{k}_per_game" for k in STATS]
 
     print("\n=== identity & duplicates ===")
     verify_identity("players", players)
     verify_no_dup_player_id("players", players)
     verify_no_dup_player_id("career_totals", career_totals)
     verify_no_dup_player_id("career_per_game", career_per_game)
-    check(
-        not season_records.duplicated(subset=["player_id", "season"]).any(),
-        "season_records: duplicate (player_id, season) rows",
-    )
 
     print("\n=== games played ===")
     verify_games_played("career_totals", career_totals)
     verify_games_played("career_per_game", career_per_game)
-    verify_games_played("season_records", season_records)
 
     print("\n=== monotonic ranks (career totals) ===")
     verify_monotonic_ranks("career_totals", career_totals, total_cols)
 
     print("\n=== plausible per-game bounds ===")
     verify_per_game_bounds("career_per_game", career_per_game, "_per_game")
-    verify_per_game_bounds("season_records", season_records, "_per_game")
 
     print("\n=== referential integrity ===")
     player_ids = set(players["player_id"].unique())
     verify_referential_integrity("career_totals", career_totals, player_ids)
     verify_referential_integrity("career_per_game", career_per_game, player_ids)
-    verify_referential_integrity("season_records", season_records, player_ids)
 
-    print("\n=== eyeball: top 5 by career points, career rebounds/game, single-season assists ===")
+    print("\n=== eyeball: top 5 by career points, career rebounds/game, career assists/game ===")
     print("-- career points --")
     print_top5(career_totals.merge(players, on="player_id"), "pts_total", "pts")
     print("-- career rebounds per game --")
     print_top5(career_per_game.merge(players, on="player_id"), "reb_per_game", "reb")
-    print("-- single-season assists --")
-    print_top5(season_records.merge(players, on="player_id"), "ast_total", "ast")
+    print("-- career assists per game --")
+    print_top5(career_per_game.merge(players, on="player_id"), "ast_per_game", "ast")
 
     print(f"\n{'='*60}")
     if failures:

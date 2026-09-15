@@ -53,15 +53,13 @@ CHECKED_SCOPES = [
     ("career_per_game.parquet", "_per_game", "PerGame", DEFAULT_GAME_CONFIG.career_per_game_min_games),
 ]
 
-UNVERIFIED_SCOPES = [
-    (
-        "season_records.parquet",
-        "No official 'all-time single-season leaders' endpoint was identified "
-        "in nba_api for direct comparison. This scope is NOT verified by this "
-        "script -- treat single-season answers with correspondingly less "
-        "confidence until a comparable source is found.",
-    ),
-]
+# Both remaining scopes (career totals, career per-game) are checked
+# above. All-time career stats only means there's no single-season scope
+# left to leave unverified; kept as a list (rather than removed) so a
+# future scope this script can't check against a live source (e.g. a
+# derived template) has an obvious place to be declared, loudly, rather
+# than silently skipped.
+UNVERIFIED_SCOPES: list[tuple[str, str]] = []
 
 
 def fetch_official_top_n(per_mode: str) -> dict[str, list[tuple[int, int, str, float]]]:
@@ -185,16 +183,18 @@ def main() -> None:
     for parquet_file, value_suffix, per_mode, min_games in CHECKED_SCOPES:
         all_mismatches.extend(audit_scope(parquet_file, value_suffix, per_mode, min_games))
 
-    print("\n=== Unverified scopes ===")
-    for scope_name, reason in UNVERIFIED_SCOPES:
-        print(f"  {scope_name}: UNVERIFIED -- {reason}")
+    if UNVERIFIED_SCOPES:
+        print("\n=== Unverified scopes ===")
+        for scope_name, reason in UNVERIFIED_SCOPES:
+            print(f"  {scope_name}: UNVERIFIED -- {reason}")
 
     print(f"\n{'=' * 70}")
     if all_mismatches:
         print(f"{len(all_mismatches)} MISMATCH(ES) FOUND across {len(CHECKED_SCOPES)} checked scopes.")
         sys.exit(1)
     print(f"No mismatches in {len(CHECKED_SCOPES)} checked scopes ({len(STAT_API_COL)} stats each).")
-    print(f"{len(UNVERIFIED_SCOPES)} scope(s) remain unverified (see above).")
+    if UNVERIFIED_SCOPES:
+        print(f"{len(UNVERIFIED_SCOPES)} scope(s) remain unverified (see above).")
 
 
 if __name__ == "__main__":

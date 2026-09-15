@@ -11,22 +11,26 @@ from enum import Enum
 
 
 class DatasetScope(str, Enum):
-    """Which table a question is drawn from."""
+    """Which table a question is drawn from.
+
+    All-time career stats only: single-season and single-playoff-run
+    questions were cut entirely (they added a qualifying-games floor and
+    a season-specific template for comparatively little variety once the
+    stat pool itself is wide and well-weighted). Every scope here is a
+    career aggregate.
+    """
 
     CAREER_TOTAL = "career_total"
     CAREER_PER_GAME = "career_per_game"
-    SEASON_RECORD = "season_record"
 
 
 class ValueKind(str, Enum):
     """Whether a question is asked about a total or a per-game average.
 
-    Fixed by scope for CAREER_TOTAL (always TOTAL) and CAREER_PER_GAME
-    (always PER_GAME). For SEASON_RECORD either kind is possible from the
-    same table, chosen per-question, because a single-season *total* record
-    (e.g. a lockout-shortened season) is legitimate with no games floor,
-    while a single-season *per-game* record needs a qualifying-games floor
-    to stop a 12-game call-up from owning a leaderboard.
+    Fixed 1:1 by scope: CAREER_TOTAL is always TOTAL, CAREER_PER_GAME is
+    always PER_GAME. Kept as its own type (rather than folded into
+    DatasetScope) because question text and formatting logic key off it
+    directly.
     """
 
     TOTAL = "total"
@@ -35,14 +39,13 @@ class ValueKind(str, Enum):
 
 @dataclass(frozen=True)
 class StatDef:
-    """Describes one statistic as it appears across the three datasets.
+    """Describes one statistic as it appears across the two datasets.
 
     ``totals_col`` and ``per_game_col`` are the column names in
-    career_totals.parquet / career_per_game.parquet / season_records.parquet
-    (season_records carries both a totals and a per-game column, prefixed
-    the same way). ``tracked_since`` is the first season (e.g. "1973-74")
-    the NBA recorded this stat league-wide, or None if it has been tracked
-    since the league's founding.
+    career_totals.parquet / career_per_game.parquet. ``tracked_since`` is
+    the first season (e.g. "1973-74") the NBA recorded this stat
+    league-wide, or None if it has been tracked since the league's
+    founding.
     """
 
     key: str
@@ -50,9 +53,6 @@ class StatDef:
     totals_col: str
     per_game_col: str
     tracked_since: str | None = None
-    in_career_totals: bool = True
-    in_career_per_game: bool = True
-    in_season_records: bool = True
 
     def era_caveat(self) -> str | None:
         if self.tracked_since is None:
@@ -138,54 +138,31 @@ class GameConfig:
     round_points: int = 1
     exact_match_bonus_points: int = 2  # total awarded for an exact match
     career_per_game_min_games: int = 400
-    season_per_game_min_games: int = 58
-    season_total_min_games: int = 1
 
-    # Within SEASON_RECORD, how often a question asks about the season's
-    # total vs. its per-game average.
-    season_value_kind_weights: dict[ValueKind, float] = field(
-        default_factory=lambda: {
-            ValueKind.TOTAL: 0.5,
-            ValueKind.PER_GAME: 0.5,
-        }
-    )
-
+    # Widened once single-season questions were cut: with only two scopes
+    # left, rank variety within each stat carries more of the game's
+    # difficulty range, so career totals can go much deeper than before.
     career_total_ranks: RankRange = field(
-        default_factory=lambda: RankRange(low=1, high=250)
+        default_factory=lambda: RankRange(low=1, high=300)
     )
     career_per_game_ranks: RankRange = field(
         default_factory=lambda: RankRange(low=1, high=100)
     )
-    season_record_ranks: RankRange = field(
-        default_factory=lambda: RankRange(low=1, high=100)
-    )
 
-    # Skewed heavily toward all-time (career) questions per user preference;
-    # single-season questions still show up, just as the occasional change
-    # of pace rather than a third of all rounds.
     dataset_weights: dict[DatasetScope, float] = field(
         default_factory=lambda: {
-            DatasetScope.CAREER_TOTAL: 0.55,
-            DatasetScope.CAREER_PER_GAME: 0.35,
-            DatasetScope.SEASON_RECORD: 0.10,
+            DatasetScope.CAREER_TOTAL: 0.6,
+            DatasetScope.CAREER_PER_GAME: 0.4,
         }
     )
 
-    # Stats eligible per dataset scope. Same catalogue for all three today,
-    # but kept separate so a scope can be pared down without touching STATS.
+    # Stats eligible per dataset scope. Same catalogue for both today, but
+    # kept separate so a scope can be pared down without touching STATS.
     career_total_stats: tuple[str, ...] = tuple(STATS.keys())
     career_per_game_stats: tuple[str, ...] = tuple(STATS.keys())
-    season_record_stats: tuple[str, ...] = tuple(STATS.keys())
 
-    def dataset_config(
-        self, scope: DatasetScope, value_kind: ValueKind | None = None
-    ) -> DatasetConfig:
-        """Resolve full knobs for one (scope, value_kind) question shape.
-
-        `value_kind` is required for SEASON_RECORD (either kind is valid
-        there) and ignored for CAREER_TOTAL/CAREER_PER_GAME, whose kind is
-        fixed by the scope itself.
-        """
+    def dataset_config(self, scope: DatasetScope) -> DatasetConfig:
+        """Resolve full knobs for one (scope, value_kind) question shape."""
         if scope is DatasetScope.CAREER_TOTAL:
             return DatasetConfig(
                 scope=scope,
@@ -195,29 +172,13 @@ class GameConfig:
                 stat_allowlist=self.career_total_stats,
                 min_games=1,
             )
-        if scope is DatasetScope.CAREER_PER_GAME:
-            return DatasetConfig(
-                scope=scope,
-                value_kind=ValueKind.PER_GAME,
-                weight=self.dataset_weights[scope],
-                rank_range=self.career_per_game_ranks,
-                stat_allowlist=self.career_per_game_stats,
-                min_games=self.career_per_game_min_games,
-            )
-        if value_kind is None:
-            raise ValueError("value_kind is required for SEASON_RECORD")
-        min_games = (
-            self.season_total_min_games
-            if value_kind is ValueKind.TOTAL
-            else self.season_per_game_min_games
-        )
         return DatasetConfig(
             scope=scope,
-            value_kind=value_kind,
+            value_kind=ValueKind.PER_GAME,
             weight=self.dataset_weights[scope],
-            rank_range=self.season_record_ranks,
-            stat_allowlist=self.season_record_stats,
-            min_games=min_games,
+            rank_range=self.career_per_game_ranks,
+            stat_allowlist=self.career_per_game_stats,
+            min_games=self.career_per_game_min_games,
         )
 
 

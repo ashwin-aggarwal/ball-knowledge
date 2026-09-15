@@ -2,9 +2,12 @@
 """One-time local build of the ball-knowledge NBA snapshot.
 
 Pulls candidate players from nba_api's AllTimeLeadersGrids endpoint, then
-career + season-by-season totals for each from PlayerCareerStats, and
-writes data/career_totals.parquet, data/career_per_game.parquet,
-data/season_records.parquet, data/players.parquet and data/manifest.json.
+career totals for each from PlayerCareerStats (season-by-season rows are
+fetched too, since they're bundled in the same call, but only used to
+compute a per-stat games-played denominator and each player's first/last
+season -- not written out, since single-season questions were cut).
+Writes data/career_totals.parquet, data/career_per_game.parquet,
+data/players.parquet and data/manifest.json.
 
 Every raw API response is cached to .cache/nba/ as JSON, keyed by endpoint
 and parameters, so a rerun after a dropped connection resumes instead of
@@ -301,10 +304,9 @@ def build_tables(
     candidate_ids: list[int],
     careers: dict[int, dict[str, Any]],
     static_by_id: dict[int, dict[str, Any]],
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     career_total_rows = []
     per_game_rows = []
-    season_rows_out = []
     player_rows = []
 
     for pid in candidate_ids:
@@ -346,20 +348,12 @@ def build_tables(
         career_total_rows.append(row_total)
         per_game_rows.append(row_pg)
 
-        season_ids = []
-        for s in valid_seasons:
-            s_gp = s["GP"]
-            season_ids.append(s["SEASON_ID"])
-            srow: dict[str, Any] = {
-                "player_id": pid,
-                "season": s["SEASON_ID"],
-                "gp": s_gp,
-            }
-            for stat_key, api_col in STAT_API_COL.items():
-                val = s.get(api_col)
-                srow[f"{stat_key}_total"] = val
-                srow[f"{stat_key}_per_game"] = (val / s_gp) if val is not None else None
-            season_rows_out.append(srow)
+        # Season data is still fetched (it's bundled in the same
+        # PlayerCareerStats call as career totals) and used above for the
+        # per-stat tracked-games denominator and here for first/last
+        # season -- just no longer written out as its own table, since
+        # single-season questions were cut entirely.
+        season_ids = [s["SEASON_ID"] for s in valid_seasons]
 
         static_info = static_by_id.get(pid, {})
         player_rows.append(
@@ -374,9 +368,8 @@ def build_tables(
 
     career_totals_df = pd.DataFrame(career_total_rows)
     career_per_game_df = pd.DataFrame(per_game_rows)
-    season_records_df = pd.DataFrame(season_rows_out)
     players_df = pd.DataFrame(player_rows)
-    return career_totals_df, career_per_game_df, season_records_df, players_df
+    return career_totals_df, career_per_game_df, players_df
 
 
 def attach_headshot_flags(
@@ -401,7 +394,6 @@ def write_manifest(
     data_dir: Path,
     career_totals_df: pd.DataFrame,
     career_per_game_df: pd.DataFrame,
-    season_records_df: pd.DataFrame,
     players_df: pd.DataFrame,
     candidate_pool_size: int,
     stats: BuildStats,
@@ -417,15 +409,18 @@ def write_manifest(
         "row_counts": {
             "career_totals": len(career_totals_df),
             "career_per_game": len(career_per_game_df),
-            "season_records": len(season_records_df),
             "players": len(players_df),
         },
+        # Coverage of career first/last seasons across all candidates.
+        # No season-by-season table is written (single-season questions
+        # were cut), but this still tells us how far back the underlying
+        # data reaches.
         "season_coverage": {
             "min_season": (
-                season_records_df["season"].min() if not season_records_df.empty else None
+                players_df["first_season"].min() if not players_df.empty else None
             ),
             "max_season": (
-                season_records_df["season"].max() if not season_records_df.empty else None
+                players_df["last_season"].max() if not players_df.empty else None
             ),
         },
         "endpoints_used": [
@@ -502,14 +497,13 @@ def main() -> None:
             )
 
     log.info("Building tables...")
-    career_totals_df, career_per_game_df, season_records_df, players_df = build_tables(
+    career_totals_df, career_per_game_df, players_df = build_tables(
         candidate_ids, careers, static_by_id
     )
     log.info(
-        "  career_totals=%d career_per_game=%d season_records=%d players=%d",
+        "  career_totals=%d career_per_game=%d players=%d",
         len(career_totals_df),
         len(career_per_game_df),
-        len(season_records_df),
         len(players_df),
     )
 
@@ -523,14 +517,12 @@ def main() -> None:
     log.info("Writing parquet files to %s ...", data_dir)
     career_totals_df.to_parquet(data_dir / "career_totals.parquet", index=False)
     career_per_game_df.to_parquet(data_dir / "career_per_game.parquet", index=False)
-    season_records_df.to_parquet(data_dir / "season_records.parquet", index=False)
     players_df.to_parquet(data_dir / "players.parquet", index=False)
 
     write_manifest(
         data_dir,
         career_totals_df,
         career_per_game_df,
-        season_records_df,
         players_df,
         len(candidate_ids),
         stats,

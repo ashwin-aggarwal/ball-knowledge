@@ -27,13 +27,12 @@ from ball_knowledge.questions import (  # noqa: F401 (re-exported)
 REQUIRED_FILES = (
     "career_totals.parquet",
     "career_per_game.parquet",
-    "season_records.parquet",
     "players.parquet",
 )
 
 
 def load_tables(data_dir: str | Path = DATA_DIR) -> DataTables:
-    """Load the four parquet tables from `data_dir` into a DataTables bundle."""
+    """Load the parquet tables from `data_dir` into a DataTables bundle."""
     data_path = Path(data_dir)
     missing = [f for f in REQUIRED_FILES if not (data_path / f).exists()]
     if missing:
@@ -44,7 +43,6 @@ def load_tables(data_dir: str | Path = DATA_DIR) -> DataTables:
     return DataTables(
         career_totals=pd.read_parquet(data_path / "career_totals.parquet"),
         career_per_game=pd.read_parquet(data_path / "career_per_game.parquet"),
-        season_records=pd.read_parquet(data_path / "season_records.parquet"),
         players=pd.read_parquet(data_path / "players.parquet"),
     )
 

@@ -6,7 +6,7 @@ import traceback
 import streamlit as st
 
 from ball_knowledge import state
-from ball_knowledge.config import DEFAULT_GAME_CONFIG, DatasetScope, ValueKind
+from ball_knowledge.config import DEFAULT_GAME_CONFIG, ValueKind
 from ball_knowledge.data import resolve_guess_value_and_rank, resolve_player_by_name
 from ball_knowledge.scoring import GuessInput
 from ball_knowledge.state import Phase
@@ -81,8 +81,6 @@ def render_collect() -> None:
     guesser = state.current_guesser()
     st.markdown(f"#### {guesser}'s guess")
     components.render_card_back(q.question_text, q.era_caveat)
-    if q.scope is DatasetScope.SEASON_RECORD:
-        st.caption("Each player is scored on their own best qualifying season for this stat.")
     st.caption("Type any player below.")
     # Keying by (collect_index, clear_nonce) guarantees a fresh widget for
     # each guesser's turn and for each "Clear" click, since Streamlit
@@ -128,7 +126,6 @@ def render_reveal() -> None:
         player_name=q.answer_player_name,
         value_display=f"{_format_value(q.answer_value, q.value_kind)} {q.stat_label}",
         rank_display=f"#{q.target_rank}",
-        season=q.answer_season,
     )
     st.markdown("#### Guesses, closest first")
     components.render_guess_strip(scored)
