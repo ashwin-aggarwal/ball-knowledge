@@ -7,6 +7,7 @@ sentinel file so we don't retry the same 404 on every rerun.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import requests
@@ -15,6 +16,12 @@ import streamlit as st
 from ball_knowledge.config import HEADSHOT_CACHE_DIR, HEADSHOT_URL_TEMPLATE
 
 REQUEST_TIMEOUT_SECONDS = 10
+
+# The CDN doesn't 404 for a player with no real photo -- it serves this
+# exact generic gray-silhouette placeholder with a 200 status instead.
+# Without this check that placeholder would be cached and shown as if it
+# were a real headshot. Confirmed by hash across multiple pre-2000 players.
+_GENERIC_PLACEHOLDER_MD5 = "e7f284977a4931dedd1cb6ba4c32283e"
 
 
 def _cache_paths(player_id: int) -> tuple[Path, Path]:
@@ -34,7 +41,11 @@ def fetch_headshot_bytes(player_id: int) -> bytes | None:
     url = HEADSHOT_URL_TEMPLATE.format(player_id=player_id)
     try:
         resp = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
-        if resp.status_code == 200 and resp.content:
+        is_placeholder = (
+            resp.status_code == 200
+            and hashlib.md5(resp.content).hexdigest() == _GENERIC_PLACEHOLDER_MD5
+        )
+        if resp.status_code == 200 and resp.content and not is_placeholder:
             img_path.write_bytes(resp.content)
             return resp.content
     except requests.exceptions.RequestException:

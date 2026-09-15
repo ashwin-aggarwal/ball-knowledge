@@ -319,21 +319,36 @@ def build_tables(
         if gp <= 0:
             continue
 
+        seasons = dedupe_season_rows(data["SeasonTotalsRegularSeason"])
+        valid_seasons = [s for s in seasons if (s.get("GP") or 0) > 0]
+
+        # Per-stat tracked-games denominator: games played only in seasons
+        # where that specific stat was recorded (non-null), not blanket
+        # career GP. A career spanning a stat's tracking start date (e.g.
+        # DREB from 1973-74) would otherwise have its per-game average
+        # diluted by games from untracked seasons that contributed 0 to
+        # the numerator but still counted in the denominator -- silently
+        # understating the average for anyone straddling that boundary.
+        tracked_gp_by_stat: dict[str, int] = {
+            stat_key: sum(s["GP"] for s in valid_seasons if s.get(api_col) is not None)
+            for stat_key, api_col in STAT_API_COL.items()
+        }
+
         row_total: dict[str, Any] = {"player_id": pid, "gp": gp}
         row_pg: dict[str, Any] = {"player_id": pid, "gp": gp}
         for stat_key, api_col in STAT_API_COL.items():
             val = career.get(api_col)
             row_total[f"{stat_key}_total"] = val
-            row_pg[f"{stat_key}_per_game"] = (val / gp) if val is not None else None
+            tracked_gp = tracked_gp_by_stat[stat_key]
+            row_pg[f"{stat_key}_per_game"] = (
+                (val / tracked_gp) if (val is not None and tracked_gp > 0) else None
+            )
         career_total_rows.append(row_total)
         per_game_rows.append(row_pg)
 
-        seasons = dedupe_season_rows(data["SeasonTotalsRegularSeason"])
         season_ids = []
-        for s in seasons:
-            s_gp = s.get("GP") or 0
-            if s_gp <= 0:
-                continue
+        for s in valid_seasons:
+            s_gp = s["GP"]
             season_ids.append(s["SEASON_ID"])
             srow: dict[str, Any] = {
                 "player_id": pid,
