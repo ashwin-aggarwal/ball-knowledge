@@ -18,6 +18,21 @@ class DatasetScope(str, Enum):
     SEASON_RECORD = "season_record"
 
 
+class ValueKind(str, Enum):
+    """Whether a question is asked about a total or a per-game average.
+
+    Fixed by scope for CAREER_TOTAL (always TOTAL) and CAREER_PER_GAME
+    (always PER_GAME). For SEASON_RECORD either kind is possible from the
+    same table, chosen per-question, because a single-season *total* record
+    (e.g. a lockout-shortened season) is legitimate with no games floor,
+    while a single-season *per-game* record needs a qualifying-games floor
+    to stop a 12-game call-up from owning a leaderboard.
+    """
+
+    TOTAL = "total"
+    PER_GAME = "per_game"
+
+
 @dataclass(frozen=True)
 class StatDef:
     """Describes one statistic as it appears across the three datasets.
@@ -103,7 +118,10 @@ class RankRange:
 
 @dataclass(frozen=True)
 class DatasetConfig:
+    """Fully resolved knobs for one (scope, value_kind) question shape."""
+
     scope: DatasetScope
+    value_kind: ValueKind
     weight: float
     rank_range: RankRange
     stat_allowlist: tuple[str, ...]
@@ -121,6 +139,16 @@ class GameConfig:
     exact_match_bonus_points: int = 2  # total awarded for an exact match
     career_per_game_min_games: int = 400
     season_per_game_min_games: int = 58
+    season_total_min_games: int = 1
+
+    # Within SEASON_RECORD, how often a question asks about the season's
+    # total vs. its per-game average.
+    season_value_kind_weights: dict[ValueKind, float] = field(
+        default_factory=lambda: {
+            ValueKind.TOTAL: 0.5,
+            ValueKind.PER_GAME: 0.5,
+        }
+    )
 
     career_total_ranks: RankRange = field(
         default_factory=lambda: RankRange(low=1, high=250)
@@ -146,10 +174,19 @@ class GameConfig:
     career_per_game_stats: tuple[str, ...] = tuple(STATS.keys())
     season_record_stats: tuple[str, ...] = tuple(STATS.keys())
 
-    def dataset_config(self, scope: DatasetScope) -> DatasetConfig:
+    def dataset_config(
+        self, scope: DatasetScope, value_kind: ValueKind | None = None
+    ) -> DatasetConfig:
+        """Resolve full knobs for one (scope, value_kind) question shape.
+
+        `value_kind` is required for SEASON_RECORD (either kind is valid
+        there) and ignored for CAREER_TOTAL/CAREER_PER_GAME, whose kind is
+        fixed by the scope itself.
+        """
         if scope is DatasetScope.CAREER_TOTAL:
             return DatasetConfig(
                 scope=scope,
+                value_kind=ValueKind.TOTAL,
                 weight=self.dataset_weights[scope],
                 rank_range=self.career_total_ranks,
                 stat_allowlist=self.career_total_stats,
@@ -158,17 +195,26 @@ class GameConfig:
         if scope is DatasetScope.CAREER_PER_GAME:
             return DatasetConfig(
                 scope=scope,
+                value_kind=ValueKind.PER_GAME,
                 weight=self.dataset_weights[scope],
                 rank_range=self.career_per_game_ranks,
                 stat_allowlist=self.career_per_game_stats,
                 min_games=self.career_per_game_min_games,
             )
+        if value_kind is None:
+            raise ValueError("value_kind is required for SEASON_RECORD")
+        min_games = (
+            self.season_total_min_games
+            if value_kind is ValueKind.TOTAL
+            else self.season_per_game_min_games
+        )
         return DatasetConfig(
             scope=scope,
+            value_kind=value_kind,
             weight=self.dataset_weights[scope],
             rank_range=self.season_record_ranks,
             stat_allowlist=self.season_record_stats,
-            min_games=self.season_per_game_min_games,
+            min_games=min_games,
         )
 
 
