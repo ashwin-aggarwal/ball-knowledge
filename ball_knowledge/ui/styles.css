@@ -1,3 +1,404 @@
-/* Card aesthetic styles land here in the Design phase. Empty for Phase 4
-   ("deliberately ugly unstyled UI") so raw Streamlit widgets are used to
-   verify the state machine mechanics before any visual design work. */
+/* ball-knowledge: 1970s printed trading card.
+   A question is a card back with the name blacked out; the reveal flips
+   to the card front. Flat printing inks on aged manila cardstock, visible
+   halftone dots in the photo, an uneven printed border, off-register type.
+   Boldness is spent on the reveal moment; everything else stays quiet. */
+
+@import url('https://fonts.googleapis.com/css2?family=Anton&family=Roboto+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  --bk-page-bg: #17324c;
+  --bk-card-stock: #ece0bb;
+  --bk-card-stock-back: #e2d5a8;
+  --bk-ink: #211d15;
+  --bk-ink-red: #b23a2c;
+  --bk-ink-gold: #c99a35;
+  --bk-ink-teal: #2e6a5c;
+  --bk-shadow: rgba(8, 8, 6, 0.45);
+  --bk-halftone: rgba(33, 29, 21, 0.16);
+  --bk-radius: 18px;
+  --bk-font-display: 'Anton', 'Arial Narrow', sans-serif;
+  --bk-font-mono: 'Roboto Mono', ui-monospace, 'SFMono-Regular', monospace;
+}
+
+/* ---------- Page chrome ---------- */
+.stApp {
+  background: var(--bk-page-bg) !important;
+}
+.stApp, .stApp p, .stApp span, .stApp label, .stApp div {
+  font-family: var(--bk-font-mono);
+}
+.stApp h1, .stApp h2, .stApp h3 {
+  font-family: var(--bk-font-display);
+  color: var(--bk-card-stock);
+  letter-spacing: 0.02em;
+}
+.stApp .stCaption, .stApp small {
+  color: var(--bk-card-stock);
+  opacity: 0.75;
+}
+.block-container {
+  padding-top: 2.5rem;
+  max-width: 720px;
+}
+
+/* ---------- Native widget theming ---------- */
+.stButton > button {
+  font-family: var(--bk-font-mono);
+  font-weight: 700;
+  background: var(--bk-card-stock);
+  color: var(--bk-ink);
+  border: 3px solid var(--bk-ink);
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 var(--bk-ink);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+  padding: 0.5rem 1.1rem;
+}
+.stButton > button:hover {
+  background: var(--bk-ink-gold);
+  color: var(--bk-ink);
+  border-color: var(--bk-ink);
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--bk-ink);
+}
+.stButton > button:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--bk-ink);
+}
+.stButton > button:disabled {
+  opacity: 0.35;
+  box-shadow: none;
+  transform: none;
+}
+.stButton > button:focus-visible {
+  outline: 3px solid var(--bk-ink-gold);
+  outline-offset: 2px;
+}
+
+[data-baseweb="select"] > div {
+  border: 3px solid var(--bk-ink) !important;
+  border-radius: 10px !important;
+  background: var(--bk-card-stock) !important;
+  font-family: var(--bk-font-mono) !important;
+}
+[data-baseweb="select"]:focus-within > div {
+  outline: 3px solid var(--bk-ink-gold);
+  outline-offset: 1px;
+}
+
+.stTextInput input, .stNumberInput input {
+  font-family: var(--bk-font-mono) !important;
+  background: var(--bk-card-stock) !important;
+  color: var(--bk-ink) !important;
+  border: 3px solid var(--bk-ink) !important;
+  border-radius: 8px !important;
+}
+.stTextInput input:focus, .stNumberInput input:focus {
+  outline: 3px solid var(--bk-ink-gold);
+}
+
+/* ---------- Card shell ---------- */
+.bk-stage {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem 0 1.5rem;
+}
+.bk-card {
+  position: relative;
+  width: min(420px, 100%);
+  background: var(--bk-card-stock);
+  border-radius: var(--bk-radius);
+  padding: 13px 11px 17px 12px; /* deliberately uneven: not a perfect square print */
+  box-shadow: 9px 11px 0 var(--bk-shadow);
+  transform: rotate(-0.6deg);
+  border: 6px solid var(--bk-ink);
+}
+.bk-card--back {
+  background: var(--bk-card-stock-back);
+  transform: rotate(0.5deg);
+}
+.bk-card--front {
+  border-color: var(--bk-ink-red);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bk-card--front {
+    animation: bk-flip-in 0.55s cubic-bezier(0.2, 0.7, 0.3, 1);
+  }
+}
+@keyframes bk-flip-in {
+  from {
+    transform: rotate(-0.6deg) rotateY(80deg);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(-0.6deg) rotateY(0deg);
+    opacity: 1;
+  }
+}
+.bk-card-inner {
+  border: 2px solid var(--bk-ink);
+  border-radius: calc(var(--bk-radius) - 6px);
+  padding: 16px;
+}
+
+/* ---------- Photo block ---------- */
+.bk-photo {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 3px solid var(--bk-ink);
+  background: var(--bk-ink);
+  margin-bottom: 14px;
+}
+.bk-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: sepia(0.25) saturate(1.35) contrast(1.05);
+}
+.bk-photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--bk-halftone) 1px, transparent 1.4px);
+  background-size: 4px 4px;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.bk-photo--mystery {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--bk-ink) 0 10px,
+    #2c2620 10px 20px
+  );
+}
+.bk-photo--mystery .bk-mystery-mark {
+  font-family: var(--bk-font-display);
+  font-size: 4.2rem;
+  color: var(--bk-card-stock-back);
+  opacity: 0.9;
+}
+.bk-headshot-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--bk-ink-teal), var(--bk-ink));
+}
+.bk-headshot-fallback-initials {
+  font-family: var(--bk-font-display);
+  font-size: 3rem;
+  color: var(--bk-card-stock);
+}
+
+/* ---------- Nameplate / question / stat callout ---------- */
+.bk-nameplate {
+  font-family: var(--bk-font-display);
+  font-size: 1.7rem;
+  text-align: center;
+  color: var(--bk-ink);
+  margin: 4px 0 8px;
+  line-height: 1.05;
+  text-shadow: 1.5px 0 0 rgba(178, 58, 44, 0.55), -1.5px 0 0 rgba(46, 106, 92, 0.4);
+}
+.bk-question {
+  text-align: center;
+  font-size: 1.05rem;
+  line-height: 1.45;
+  margin: 6px 0;
+  color: var(--bk-ink);
+}
+.bk-caveat {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--bk-ink-red);
+  margin-top: 10px;
+}
+.bk-stat-callout {
+  text-align: center;
+  font-family: var(--bk-font-mono);
+  font-weight: 700;
+  font-size: 1.5rem;
+  letter-spacing: 0.02em;
+  color: var(--bk-ink);
+  margin-top: 6px;
+}
+.bk-rank-badge {
+  display: inline-block;
+  background: var(--bk-ink-gold);
+  color: var(--bk-ink);
+  border: 2px solid var(--bk-ink);
+  border-radius: 999px;
+  padding: 1px 10px;
+  margin-left: 8px;
+  font-size: 0.88rem;
+  vertical-align: middle;
+}
+.bk-season-tag {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--bk-ink-teal);
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+/* ---------- Guess strip (reveal) ---------- */
+.bk-guess-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  padding: 10px 0 4px;
+}
+.bk-guess-card {
+  width: 128px;
+  background: var(--bk-card-stock);
+  border: 3px solid var(--bk-ink);
+  border-radius: 10px;
+  padding: 8px;
+  text-align: center;
+  box-shadow: 4px 5px 0 var(--bk-shadow);
+}
+.bk-guess-card--exact {
+  border-color: var(--bk-ink-red);
+  box-shadow: 4px 5px 0 var(--bk-ink-red);
+}
+.bk-guess-photo {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 2px solid var(--bk-ink);
+  margin-bottom: 6px;
+  background: var(--bk-ink);
+  position: relative;
+}
+.bk-guess-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: sepia(0.25) saturate(1.35) contrast(1.05);
+}
+.bk-guess-photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--bk-halftone) 1px, transparent 1.4px);
+  background-size: 4px 4px;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.bk-guess-player {
+  font-weight: 700;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  margin-bottom: 3px;
+}
+.bk-guess-diff {
+  font-size: 0.72rem;
+  color: var(--bk-ink-teal);
+}
+.bk-guess-points {
+  font-family: var(--bk-font-display);
+  font-size: 1.15rem;
+  color: var(--bk-ink-red);
+  margin: 3px 0;
+}
+.bk-guess-name {
+  font-size: 0.76rem;
+  border-top: 1px dashed var(--bk-ink);
+  margin-top: 6px;
+  padding-top: 5px;
+  color: var(--bk-ink);
+}
+
+/* ---------- Handoff gate: quiet, full-bleed ---------- */
+.bk-gate {
+  text-align: center;
+  padding: 3rem 1rem 2rem;
+}
+.bk-gate-label {
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+  color: var(--bk-card-stock);
+  opacity: 0.7;
+}
+.bk-gate-name {
+  font-family: var(--bk-font-display);
+  font-size: 2.5rem;
+  color: var(--bk-card-stock);
+  margin: 8px 0 20px;
+  line-height: 1.1;
+}
+
+/* ---------- Scoreboard ---------- */
+.bk-scoreboard {
+  max-width: 420px;
+  margin: 0 auto;
+}
+.bk-scoreboard-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 4px;
+  border-bottom: 2px dashed rgba(236, 224, 187, 0.4);
+}
+.bk-scoreboard-row:first-child {
+  border-top: 2px dashed rgba(236, 224, 187, 0.4);
+}
+.bk-scoreboard-rank {
+  font-family: var(--bk-font-display);
+  color: var(--bk-ink-gold);
+  width: 2rem;
+  flex-shrink: 0;
+}
+.bk-scoreboard-name {
+  flex: 1;
+  color: var(--bk-card-stock);
+  font-weight: 600;
+}
+.bk-scoreboard-score {
+  font-family: var(--bk-font-mono);
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: var(--bk-card-stock);
+}
+
+/* ---------- Crash screen: a card that got printed wrong ---------- */
+.bk-crash-card .bk-card-inner {
+  padding: 10px;
+}
+.bk-crash-photo {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 3px solid var(--bk-ink);
+  margin-bottom: 10px;
+}
+.bk-crash-photo img {
+  width: 100%;
+  display: block;
+  filter: sepia(0.3) contrast(1.12) saturate(1.25);
+}
+
+/* ---------- Responsive: phone width ---------- */
+@media (max-width: 480px) {
+  .bk-card {
+    padding: 10px 9px 14px 10px;
+  }
+  .bk-nameplate {
+    font-size: 1.4rem;
+  }
+  .bk-gate-name {
+    font-size: 2rem;
+  }
+  .bk-guess-card {
+    width: 108px;
+  }
+}

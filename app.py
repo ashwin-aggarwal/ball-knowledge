@@ -6,14 +6,23 @@ import traceback
 import streamlit as st
 
 from ball_knowledge import state
-from ball_knowledge.config import DEFAULT_GAME_CONFIG, DatasetScope
+from ball_knowledge.config import DEFAULT_GAME_CONFIG, DatasetScope, ValueKind
 from ball_knowledge.data import eligible_players_for_question
 from ball_knowledge.scoring import GuessInput
 from ball_knowledge.state import Phase
+from ball_knowledge.ui import components
+from ball_knowledge.ui.theme import inject_theme
 
 st.set_page_config(page_title="ball-knowledge", page_icon="🏀")
 
 state.init_state()
+inject_theme()
+
+
+def _format_value(value: float, value_kind: ValueKind) -> str:
+    if value_kind is ValueKind.PER_GAME:
+        return f"{value:,.1f}"
+    return f"{value:,.0f}"
 
 
 def render_lobby() -> None:
@@ -47,31 +56,33 @@ def render_lobby() -> None:
 def render_round_intro() -> None:
     ss = st.session_state
     q = ss.current_question
-    st.header(f"Round {ss.current_round} / {ss.num_rounds}")
-    st.subheader(q.question_text)
-    if st.button("Start guessing"):
-        state.begin_collecting()
-        st.rerun()
+    st.markdown(f"#### Round {ss.current_round} / {ss.num_rounds}")
+    components.render_card_back(q.question_text, q.era_caveat)
+    _, mid, _ = st.columns([1, 1, 1])
+    with mid:
+        if st.button("Start guessing", width="stretch"):
+            state.begin_collecting()
+            st.rerun()
 
 
 def render_collect() -> None:
     ss = st.session_state
     if ss.collect_gate_shown:
-        st.header(f"Pass the laptop to {state.current_guesser()}")
+        components.render_handoff_gate(state.current_guesser())
         st.write("Nobody else should see the next screen.")
-        if st.button("I'm ready"):
-            state.show_guess_input()
-            st.rerun()
+        _, mid, _ = st.columns([1, 1, 1])
+        with mid:
+            if st.button("I'm ready", width="stretch"):
+                state.show_guess_input()
+                st.rerun()
         return
 
     q = ss.current_question
     guesser = state.current_guesser()
-    st.header(f"{guesser}'s guess")
-    st.write(q.question_text)
+    st.markdown(f"#### {guesser}'s guess")
+    components.render_card_back(q.question_text, q.era_caveat)
     if q.scope is DatasetScope.SEASON_RECORD:
-        st.caption(
-            "Each player is scored on their own best qualifying season for this stat."
-        )
+        st.caption("Each player is scored on their own best qualifying season for this stat.")
     pool = eligible_players_for_question(q, state.tables())
     options = pool["full_name"].tolist()
     # Keying by (collect_index, clear_nonce) guarantees a fresh widget for
@@ -88,11 +99,11 @@ def render_collect() -> None:
     )
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Clear", disabled=selection is None):
+        if st.button("Clear", disabled=selection is None, width="stretch"):
             ss.guess_clear_nonce += 1
             st.rerun()
     with col2:
-        if st.button("Confirm guess", disabled=selection is None):
+        if st.button("Confirm guess", disabled=selection is None, width="stretch"):
             row = pool[pool["full_name"] == selection].iloc[0]
             guess = GuessInput(
                 guesser_name=guesser,
@@ -109,47 +120,49 @@ def render_reveal() -> None:
     ss = st.session_state
     q = ss.current_question
     scored = state.reveal_and_score()
-    st.header("The answer")
-    st.subheader(f"{q.answer_player_name} — {q.answer_value:g}")
-    if q.answer_season:
-        st.caption(f"Season: {q.answer_season}")
-    st.write("---")
-    st.subheader("Guesses (closest first)")
-    for s in scored:
-        marker = " 🎯 EXACT" if s.is_exact else ""
-        st.write(
-            f"**{s.guesser_name}** guessed {s.nba_player_name} ({s.value:g}) "
-            f"— off by {s.diff:g} — +{s.points} pts{marker}"
-        )
-    if st.button("See scoreboard"):
-        state.apply_scores_and_go_to_scoreboard()
-        st.rerun()
+    components.render_card_front(
+        player_id=q.answer_player_id,
+        player_name=q.answer_player_name,
+        value_display=f"{_format_value(q.answer_value, q.value_kind)} {q.stat_label}",
+        rank_display=f"#{q.target_rank}",
+        season=q.answer_season,
+    )
+    st.markdown("#### Guesses, closest first")
+    components.render_guess_strip(scored)
+    _, mid, _ = st.columns([1, 1, 1])
+    with mid:
+        if st.button("See scoreboard", width="stretch"):
+            state.apply_scores_and_go_to_scoreboard()
+            st.rerun()
 
 
 def render_scoreboard() -> None:
     ss = st.session_state
-    st.header("Scoreboard")
+    st.markdown("#### Scoreboard")
     ranked = sorted(ss.scores.items(), key=lambda kv: -kv[1])
-    for name, score in ranked:
-        st.write(f"{name}: {score}")
+    components.render_scoreboard(ranked)
     label = "Next round" if ss.current_round < ss.num_rounds else "See final results"
-    if st.button(label):
-        state.advance_after_scoreboard()
-        st.rerun()
+    _, mid, _ = st.columns([1, 1, 1])
+    with mid:
+        if st.button(label, width="stretch"):
+            state.advance_after_scoreboard()
+            st.rerun()
 
 
 def render_game_over() -> None:
     ss = st.session_state
-    st.header("Game over!")
+    st.markdown("#### Game over!")
     ranked = sorted(ss.scores.items(), key=lambda kv: -kv[1])
-    for i, (name, score) in enumerate(ranked, start=1):
-        st.write(f"{i}. {name}: {score}")
-    if st.button("Play again"):
-        state.play_again()
-        st.rerun()
-    if st.button("Start over"):
-        state.reset_all()
-        st.rerun()
+    components.render_scoreboard(ranked)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Play again", width="stretch"):
+            state.play_again()
+            st.rerun()
+    with col2:
+        if st.button("Start over", width="stretch"):
+            state.reset_all()
+            st.rerun()
 
 
 PHASE_RENDERERS = {
@@ -168,17 +181,17 @@ def render_crash_screen() -> None:
     depends on whatever just broke.
     """
     ss = st.session_state
-    st.image("assets/crash.png", width="stretch")
+    components.render_crash_card("assets/crash.png")
     st.error(f"Something broke: {ss.crash_info['message']}")
     with st.expander("Traceback"):
         st.code(ss.crash_info["traceback"])
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Back to the scoreboard"):
+        if st.button("Back to the scoreboard", width="stretch"):
             state.recover_to_scoreboard()
             st.rerun()
     with col2:
-        if st.button("Start over", key="crash_start_over"):
+        if st.button("Start over", key="crash_start_over", width="stretch"):
             state.reset_all()
             st.rerun()
 

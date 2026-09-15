@@ -109,7 +109,7 @@ def reveal_and_score() -> list[ScoredGuess]:
     q: Question = ss.current_question
     scored = score_round(
         list(ss.guesses.values()),
-        q.answer_value,
+        q.target_rank,
         round_points=ss.game_config.round_points,
         exact_match_bonus_points=ss.game_config.exact_match_bonus_points,
     )

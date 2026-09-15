@@ -1,8 +1,8 @@
 """Injects ui/styles.css and exposes palette constants for components.py.
 
-styles.css is empty during the Flow phase by design (raw, ugly Streamlit
-widgets verify the state machine first); the card aesthetic is built here
-in the Design phase.
+The concept: a 1970s printed trading card. A question is a card back with
+the player's name blacked out; the reveal flips to the card front. See
+styles.css for the full token system and rationale.
 """
 from __future__ import annotations
 
@@ -12,16 +12,20 @@ import streamlit as st
 
 STYLES_PATH = Path(__file__).parent / "styles.css"
 
-# Placeholder palette; replaced with the real card-stock palette in the
-# Design phase.
+# Mirrors the CSS custom properties in styles.css, for the rare case
+# Python needs a color value directly (inline styles, dynamic accents)
+# rather than a CSS class.
 PALETTE: dict[str, str] = {
-    "background": "#e8dcc0",
-    "ink": "#1a1a1a",
-    "accent": "#c8102e",
+    "page_bg": "#17324c",
+    "card_stock": "#ece0bb",
+    "card_stock_back": "#e2d5a8",
+    "ink": "#211d15",
+    "ink_red": "#b23a2c",
+    "ink_gold": "#c99a35",
+    "ink_teal": "#2e6a5c",
 }
 
 
 def inject_theme() -> None:
     css = STYLES_PATH.read_text()
-    if css.strip():
-        st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
