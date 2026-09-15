@@ -160,11 +160,14 @@ class GameConfig:
         default_factory=lambda: RankRange(low=1, high=100)
     )
 
+    # Skewed heavily toward all-time (career) questions per user preference;
+    # single-season questions still show up, just as the occasional change
+    # of pace rather than a third of all rounds.
     dataset_weights: dict[DatasetScope, float] = field(
         default_factory=lambda: {
-            DatasetScope.CAREER_TOTAL: 0.45,
-            DatasetScope.CAREER_PER_GAME: 0.30,
-            DatasetScope.SEASON_RECORD: 0.25,
+            DatasetScope.CAREER_TOTAL: 0.55,
+            DatasetScope.CAREER_PER_GAME: 0.35,
+            DatasetScope.SEASON_RECORD: 0.10,
         }
     )
 

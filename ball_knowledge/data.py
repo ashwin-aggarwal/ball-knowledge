@@ -20,6 +20,8 @@ from ball_knowledge.questions import (  # noqa: F401 (re-exported)
     DataTables,
     eligible_players_for_question,
     eligible_pool,
+    resolve_guess_value_and_rank,
+    resolve_player_by_name,
 )
 
 REQUIRED_FILES = (

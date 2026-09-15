@@ -47,6 +47,19 @@ def _photo_html(player_id: int, player_name: str, *, css_class: str = "bk-photo"
     return f'<div class="{css_class}">{fallback_headshot_html(player_name)}</div>'
 
 
+def render_hero_title() -> None:
+    """The lobby wordmark: a vintage sports-logo treatment, not a plain title."""
+    _markdown(
+        """
+        <div class="bk-hero">
+          <div class="bk-hero-title">BALL KNOWLEDGE</div>
+          <div class="bk-hero-rule"></div>
+          <div class="bk-hero-sub">Hot-seat NBA stat trivia</div>
+        </div>
+        """
+    )
+
+
 def render_card_back(question_text: str, era_caveat: str | None) -> None:
     """Question screen: a card back with the player's name blacked out."""
     caveat_html = f'<div class="bk-caveat">{era_caveat}</div>' if era_caveat else ""
@@ -103,7 +116,11 @@ def render_guess_strip(scored: list[ScoredGuess]) -> None:
     for s in scored:
         photo_html = _photo_html(s.nba_player_id, s.nba_player_name, css_class="bk-guess-photo")
         variant = " bk-guess-card--exact" if s.is_exact else ""
-        diff_label = "exact match" if s.is_exact else f"off by {s.diff:g}"
+        if s.is_exact:
+            diff_label = "exact match"
+        else:
+            spot_word = "spot" if s.diff == 1 else "spots"
+            diff_label = f"{s.diff} {spot_word} off"
         cards.append(
             f"""
             <div class="bk-guess-card{variant}">

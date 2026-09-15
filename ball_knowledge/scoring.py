@@ -20,7 +20,7 @@ class GuessInput:
     guesser_name: str
     nba_player_id: int
     nba_player_name: str
-    value: float
+    value: float | None
     rank: int
 
 
@@ -31,7 +31,7 @@ class ScoredGuess:
     guesser_name: str
     nba_player_id: int
     nba_player_name: str
-    value: float
+    value: float | None
     rank: int
     diff: int
     points: int

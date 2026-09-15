@@ -8,6 +8,8 @@ from ball_knowledge.questions import (
     eligible_players_for_question,
     eligible_pool,
     generate_question,
+    resolve_guess_value_and_rank,
+    resolve_player_by_name,
 )
 from conftest import OLD_TIMER_ID, SHORT_CAREER_IDS
 
@@ -181,6 +183,64 @@ def test_season_record_question_carries_answer_season(tables) -> None:
     q = generate_question(tables, config, used_keys=set(), rng=rng)
     assert q.scope is DatasetScope.SEASON_RECORD
     assert q.answer_season in ("2020-21", "2021-22")
+
+
+def test_resolve_player_by_name_exact_case_insensitive(tables) -> None:
+    match = resolve_player_by_name("player 1", tables.players)
+    assert match is not None
+    assert match["player_id"] == 1
+
+    match_whitespace = resolve_player_by_name("  Player 1  ", tables.players)
+    assert match_whitespace is not None
+    assert match_whitespace["player_id"] == 1
+
+
+def test_resolve_player_by_name_no_fuzzy_match(tables) -> None:
+    assert resolve_player_by_name("Playr 1", tables.players) is None
+    assert resolve_player_by_name("", tables.players) is None
+    assert resolve_player_by_name("   ", tables.players) is None
+    assert resolve_player_by_name("Someone Nobody Heard Of", tables.players) is None
+
+
+def test_resolve_guess_value_and_rank_for_eligible_player(tables, small_game_config) -> None:
+    rng = random.Random(6)
+    q = generate_question(tables, small_game_config, used_keys=set(), rng=rng)
+    pool = eligible_players_for_question(q, tables)
+    row = pool.iloc[0]
+    value, rank = resolve_guess_value_and_rank(int(row["player_id"]), q, tables)
+    assert value == row["value"]
+    assert rank == row["rank"]
+
+
+def test_resolve_guess_value_and_rank_for_ineligible_player_is_worse_than_worst(
+    tables, small_game_config
+) -> None:
+    # Career per-game requires 400+ games; players 7 and 8 (gp=200) don't
+    # qualify but must still resolve to *some* (worse) rank, not crash.
+    from ball_knowledge.config import DatasetScope as DS
+
+    config = small_game_config
+    dataset_config = config.dataset_config(DS.CAREER_PER_GAME)
+    q = generate_question(
+        tables,
+        GameConfig(
+            dataset_weights={
+                DatasetScope.CAREER_TOTAL: 0.0,
+                DatasetScope.CAREER_PER_GAME: 1.0,
+                DatasetScope.SEASON_RECORD: 0.0,
+            },
+            career_per_game_stats=("pts",),
+            career_per_game_ranks=dataset_config.rank_range,
+            career_per_game_min_games=dataset_config.min_games,
+        ),
+        used_keys=set(),
+        rng=random.Random(7),
+    )
+    pool = eligible_players_for_question(q, tables)
+    worst_rank = int(pool["rank"].max())
+    value, rank = resolve_guess_value_and_rank(7, q, tables)  # player 7: gp=200, ineligible
+    assert value is None
+    assert rank == worst_rank + 1
 
 
 def test_question_text_ordinal_suffixes() -> None:

@@ -97,6 +97,40 @@
   outline: 3px solid var(--bk-ink-gold);
 }
 
+/* ---------- Hero title (lobby wordmark) ---------- */
+.bk-hero {
+  text-align: center;
+  padding: 0.5rem 0 1.5rem;
+}
+.bk-hero-title {
+  font-family: var(--bk-font-display);
+  font-size: clamp(2.4rem, 9vw, 3.6rem);
+  line-height: 0.95;
+  letter-spacing: 0.01em;
+  color: var(--bk-card-stock);
+  text-shadow: 2px 0 0 var(--bk-ink-red), -2px 0 0 var(--bk-ink-teal);
+  margin: 0;
+}
+.bk-hero-rule {
+  width: min(280px, 70%);
+  height: 6px;
+  margin: 10px auto 12px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--bk-ink-gold) 0 18px,
+    var(--bk-ink-red) 18px 36px
+  );
+  border-radius: 3px;
+  transform: rotate(-0.4deg);
+}
+.bk-hero-sub {
+  font-family: var(--bk-font-mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  color: var(--bk-card-stock);
+  opacity: 0.75;
+}
+
 /* ---------- Card shell ---------- */
 .bk-stage {
   display: flex;

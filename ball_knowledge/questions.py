@@ -251,3 +251,39 @@ def eligible_players_for_question(question: Question, tables: DataTables) -> pd.
     if question.scope is DatasetScope.SEASON_RECORD:
         pool = dedupe_best_per_player(pool)
     return pool
+
+
+def resolve_player_by_name(name: str, players: pd.DataFrame) -> pd.Series | None:
+    """Case/whitespace-insensitive exact match against the full player list.
+
+    Deliberately no fuzzy matching (per the brief: "no fuzzy name matching
+    to get wrong") -- a typed name must exactly match a real player's full
+    name, ignoring case and surrounding whitespace, to resolve.
+    """
+    normalized = name.strip().casefold()
+    if not normalized:
+        return None
+    matches = players[players["full_name"].str.strip().str.casefold() == normalized]
+    if matches.empty:
+        return None
+    return matches.iloc[0]
+
+
+def resolve_guess_value_and_rank(
+    player_id: int, question: Question, tables: DataTables
+) -> tuple[float | None, int]:
+    """A guessed player's (value, rank) for `question`.
+
+    Any real player can be guessed, even one who doesn't qualify for this
+    specific stat/scope (no recorded value, or below the games floor) --
+    they're scored as one spot past the eligible pool's worst rank, so an
+    ineligible guess always loses to a legitimate one but is still
+    accepted and recorded rather than rejected outright.
+    """
+    pool = eligible_players_for_question(question, tables)
+    match = pool[pool["player_id"] == player_id]
+    if not match.empty:
+        row = match.iloc[0]
+        return float(row["value"]), int(row["rank"])
+    worst_rank = int(pool["rank"].max()) if not pool.empty else question.target_rank
+    return None, worst_rank + 1

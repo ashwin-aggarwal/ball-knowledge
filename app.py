@@ -7,13 +7,13 @@ import streamlit as st
 
 from ball_knowledge import state
 from ball_knowledge.config import DEFAULT_GAME_CONFIG, DatasetScope, ValueKind
-from ball_knowledge.data import eligible_players_for_question
+from ball_knowledge.data import resolve_guess_value_and_rank, resolve_player_by_name
 from ball_knowledge.scoring import GuessInput
 from ball_knowledge.state import Phase
 from ball_knowledge.ui import components
 from ball_knowledge.ui.theme import inject_theme
 
-st.set_page_config(page_title="ball-knowledge", page_icon="🏀")
+st.set_page_config(page_title="Ball Knowledge", page_icon="🏀")
 
 state.init_state()
 inject_theme()
@@ -26,7 +26,7 @@ def _format_value(value: float, value_kind: ValueKind) -> str:
 
 
 def render_lobby() -> None:
-    st.title("ball-knowledge")
+    components.render_hero_title()
     cfg = DEFAULT_GAME_CONFIG
     st.write(
         f"Enter {cfg.min_players}-{cfg.max_players} player names (solo play works too), "
@@ -83,37 +83,40 @@ def render_collect() -> None:
     components.render_card_back(q.question_text, q.era_caveat)
     if q.scope is DatasetScope.SEASON_RECORD:
         st.caption("Each player is scored on their own best qualifying season for this stat.")
-    pool = eligible_players_for_question(q, state.tables())
-    options = pool["full_name"].tolist()
+    st.caption("Type any player below.")
     # Keying by (collect_index, clear_nonce) guarantees a fresh widget for
     # each guesser's turn and for each "Clear" click, since Streamlit
     # forbids reassigning a widget's session_state value after it has
     # already been instantiated in the same script run.
-    select_key = f"guess_select_{ss.collect_index}_{ss.guess_clear_nonce}"
-    selection = st.selectbox(
-        "Who do you think it is?",
-        options,
-        index=None,
-        key=select_key,
-        placeholder="Start typing a name...",
+    text_key = f"guess_text_{ss.collect_index}_{ss.guess_clear_nonce}"
+    typed_name = st.text_input(
+        "Who do you think it is?", key=text_key, placeholder="e.g. LeBron James"
     )
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Clear", disabled=selection is None, width="stretch"):
+        if st.button("Clear", disabled=not typed_name, width="stretch"):
             ss.guess_clear_nonce += 1
             st.rerun()
     with col2:
-        if st.button("Confirm guess", disabled=selection is None, width="stretch"):
-            row = pool[pool["full_name"] == selection].iloc[0]
-            guess = GuessInput(
-                guesser_name=guesser,
-                nba_player_id=int(row["player_id"]),
-                nba_player_name=str(row["full_name"]),
-                value=float(row["value"]),
-                rank=int(row["rank"]),
-            )
-            state.confirm_guess(guess)
-            st.rerun()
+        if st.button("Confirm guess", disabled=not typed_name, width="stretch"):
+            match = resolve_player_by_name(typed_name, state.tables().players)
+            if match is None:
+                st.error(
+                    f"No player found named \"{typed_name}\". Check the spelling and try again."
+                )
+            else:
+                value, rank = resolve_guess_value_and_rank(
+                    int(match["player_id"]), q, state.tables()
+                )
+                guess = GuessInput(
+                    guesser_name=guesser,
+                    nba_player_id=int(match["player_id"]),
+                    nba_player_name=str(match["full_name"]),
+                    value=value,
+                    rank=rank,
+                )
+                state.confirm_guess(guess)
+                st.rerun()
 
 
 def render_reveal() -> None:
