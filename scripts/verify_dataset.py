@@ -22,8 +22,11 @@ DATA_PATH = Path(DATA_DIR)
 
 # Plausible per-game upper bounds, generous enough to never false-positive
 # on a real record but tight enough to catch a units/aggregation bug.
+# pts/min/fgm/fga are set just above Wilt Chamberlain's early-60s seasons
+# (50.4 PPG in 1961-62, 48.53 MPG the same season on 19.96 FGM/39.5 FGA)
+# -- the actual all-time single-season ceilings, not data errors.
 PER_GAME_BOUNDS = {
-    "pts": 40,
+    "pts": 55,
     "reb": 30,
     "oreb": 15,
     "dreb": 20,
@@ -32,9 +35,9 @@ PER_GAME_BOUNDS = {
     "blk": 6,
     "tov": 8,
     "pf": 6,
-    "min": 48.5,
-    "fgm": 15,
-    "fga": 35,
+    "min": 49,
+    "fgm": 22,
+    "fga": 42,
     "fg3m": 8,
     "fg3a": 20,
     "ftm": 15,
