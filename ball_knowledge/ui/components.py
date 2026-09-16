@@ -107,13 +107,22 @@ def render_card_front(
     )
 
 
-def render_guess_strip(scored: list[ScoredGuess], *, scoring_mode: str = "rank") -> None:
+def render_guess_strip(
+    scored: list[ScoredGuess],
+    *,
+    scoring_mode: str = "rank",
+    value_display_fmt: str = ",.0f",
+) -> None:
     """Every guess as a headshot with the guesser's name below, closest first.
 
     `scoring_mode` matches the question's: "rank" (most templates) labels
     the gap in leaderboard spots; "value" (value_anchor) labels it in the
     stat's own units, since the gap there is a value distance, not a
-    position on a leaderboard.
+    position on a leaderboard. Every card also shows the guessed player's
+    own rank and stat total/average, regardless of scoring mode, so a
+    guess is legible on its own terms even when it didn't win the round.
+    `value_display_fmt` is a format-spec (e.g. ",.0f" for totals, ",.1f"
+    for per-game) applied to that value.
     """
     cards = []
     for s in scored:
@@ -126,11 +135,16 @@ def render_guess_strip(scored: list[ScoredGuess], *, scoring_mode: str = "rank")
         else:
             spot_word = "spot" if s.diff == 1 else "spots"
             diff_label = f"{s.diff:g} {spot_word} off"
+        if s.value is not None:
+            stat_line = f"#{s.rank} · {format(s.value, value_display_fmt)}"
+        else:
+            stat_line = "not on this leaderboard"
         cards.append(
             f"""
             <div class="bk-guess-card{variant}">
               {photo_html}
               <div class="bk-guess-player">{s.nba_player_name}</div>
+              <div class="bk-guess-stat-line">{stat_line}</div>
               <div class="bk-guess-diff">{diff_label}</div>
               <div class="bk-guess-points">+{s.points}</div>
               <div class="bk-guess-name">{s.guesser_name}</div>

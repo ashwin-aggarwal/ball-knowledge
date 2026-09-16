@@ -335,6 +335,13 @@
   line-height: 1.2;
   margin-bottom: 3px;
 }
+.bk-guess-stat-line {
+  font-family: var(--bk-font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--bk-ink);
+  margin-bottom: 2px;
+}
 .bk-guess-diff {
   font-size: 0.72rem;
   color: var(--bk-ink-teal);

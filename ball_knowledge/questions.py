@@ -28,6 +28,7 @@ deeper.
 """
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass
 
@@ -41,6 +42,8 @@ from ball_knowledge.config import (
     StatDef,
     ValueKind,
 )
+
+log = logging.getLogger(__name__)
 
 TEMPLATE_STRAIGHT_RANK = "straight_rank"
 TEMPLATE_VALUE_ANCHOR = "value_anchor"
@@ -141,6 +144,13 @@ def eligible_pool(
     """
     if value_col not in table.columns:
         return pd.DataFrame(columns=["player_id", "full_name", "value", "rank", "gp"])
+    if not pd.api.types.is_numeric_dtype(table[value_col]):
+        raise TypeError(
+            f"eligible_pool: column {value_col!r} is dtype "
+            f"{table[value_col].dtype}, not numeric. Ranking a non-numeric "
+            "column would silently sort lexicographically (e.g. '9' > '10') "
+            "instead of by value -- refusing rather than risking a wrong answer."
+        )
 
     eligible = table[(table["gp"] >= min_games) & table[value_col].notna()].copy()
     if eligible.empty:
@@ -409,6 +419,79 @@ def _build_value_anchor_question(
     )
 
 
+def _validate_question(question: Question, tables: DataTables) -> list[str]:
+    """Independently re-derive the answer and check it against `question`.
+
+    The answer is produced by lookup, not computation, so this asserts
+    the lookup actually returned what was asked for rather than assuming
+    it: an answer_value read back straight from the raw table (not the
+    already-computed pool the question was built from), a rank/closeness
+    recomputed from scratch, and question text that actually names the
+    stat and scope it's scoring against. Returns a list of failure
+    descriptions (empty means valid) rather than raising, so the caller
+    can log and resample instead of ever showing a bad question.
+    """
+    failures: list[str] = []
+    table = tables.stat_table(question.scope)
+
+    raw_row = table[table["player_id"] == question.answer_player_id]
+    if raw_row.empty:
+        failures.append(
+            f"answer_player_id {question.answer_player_id} not found in "
+            f"{question.scope.value} table at all"
+        )
+        return failures
+    raw_value = raw_row.iloc[0][question.value_col]
+    if pd.isna(raw_value):
+        failures.append(
+            f"answer player's {question.value_col} is null in the raw table "
+            "(should have been excluded by eligibility filtering)"
+        )
+        return failures
+    if abs(float(raw_value) - question.answer_value) > 1e-6:
+        failures.append(
+            f"answer_value {question.answer_value!r} does not match the raw "
+            f"table's independently-read value {raw_value!r} for "
+            f"{question.value_col}"
+        )
+
+    pool = eligible_pool(
+        table, tables.players, value_col=question.value_col, min_games=question.min_games
+    )
+    match = pool[pool["player_id"] == question.answer_player_id]
+    if match.empty:
+        failures.append("answer player not present in an independently recomputed eligible pool")
+    elif question.scoring_mode == "rank":
+        recomputed_rank = int(match.iloc[0]["rank"])
+        if recomputed_rank != question.target_rank:
+            failures.append(
+                f"recomputed rank {recomputed_rank} != question.target_rank {question.target_rank}"
+            )
+    else:  # "value": the answer must actually be closest to the anchor.
+        assert question.anchor_value is not None
+        diffs = (pool["value"] - question.anchor_value).abs()
+        closest_pid = int(pool.loc[diffs.idxmin(), "player_id"])
+        if closest_pid != question.answer_player_id:
+            failures.append(
+                f"answer player {question.answer_player_id} is not actually closest to "
+                f"anchor {question.anchor_value}; recomputation says player {closest_pid} is"
+            )
+
+    text_lower = question.question_text.lower()
+    if question.stat_label.lower() not in text_lower:
+        failures.append(
+            f"question_text {question.question_text!r} never mentions stat "
+            f"label {question.stat_label!r}"
+        )
+    mentions_per_game = "per game" in text_lower
+    if question.value_kind is ValueKind.PER_GAME and not mentions_per_game:
+        failures.append("PER_GAME question but question_text has no 'per game' wording")
+    if question.value_kind is ValueKind.TOTAL and mentions_per_game:
+        failures.append("TOTAL question but question_text mentions 'per game' anyway")
+
+    return failures
+
+
 def generate_question(
     tables: DataTables,
     config: GameConfig,
@@ -454,8 +537,19 @@ def generate_question(
                 used_keys,
                 template,
             )
-        if question is not None:
+        if question is None:
+            continue
+
+        failures = _validate_question(question, tables)
+        if not failures:
             return question
+        log.warning(
+            "Discarding a generated question that failed answer-path validation "
+            "(key=%s, template=%s): %s",
+            question.key,
+            question.template,
+            "; ".join(failures),
+        )
 
     raise RuntimeError(
         f"Could not generate a fresh question after {MAX_GENERATION_ATTEMPTS} attempts; "

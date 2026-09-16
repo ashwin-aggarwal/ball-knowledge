@@ -128,7 +128,8 @@ def render_reveal() -> None:
         rank_display=f"#{q.target_rank}",
     )
     st.markdown("#### Guesses, closest first")
-    components.render_guess_strip(scored, scoring_mode=q.scoring_mode)
+    value_fmt = ",.1f" if q.value_kind is ValueKind.PER_GAME else ",.0f"
+    components.render_guess_strip(scored, scoring_mode=q.scoring_mode, value_display_fmt=value_fmt)
     _, mid, _ = st.columns([1, 1, 1])
     with mid:
         if st.button("See scoreboard", width="stretch"):

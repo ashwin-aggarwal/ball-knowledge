@@ -96,6 +96,82 @@ def verify_referential_integrity(name: str, df: pd.DataFrame, player_ids: set[in
     check(len(missing) == 0, f"{name}: {len(missing)} player_ids not present in players.parquet")
 
 
+def verify_numeric_dtypes(name: str, df: pd.DataFrame, cols: list[str]) -> None:
+    """A stat column typed as object/string would sort lexicographically
+    ('9' > '10') instead of by value, silently producing a wrong rank."""
+    for col in cols:
+        if col not in df.columns:
+            continue
+        check(
+            pd.api.types.is_numeric_dtype(df[col]),
+            f"{name}: column {col} has non-numeric dtype {df[col].dtype}",
+        )
+
+
+def verify_made_le_attempted(name: str, df: pd.DataFrame, made_col: str, att_col: str) -> None:
+    if made_col not in df.columns or att_col not in df.columns:
+        return
+    both = df[df[made_col].notna() & df[att_col].notna()]
+    bad = both[both[made_col] > both[att_col]]
+    check(len(bad) == 0, f"{name}: {len(bad)} rows have {made_col} > {att_col}")
+
+
+def verify_oreb_dreb_sum_to_reb(
+    name: str, df: pd.DataFrame, suffix: str, careers_fully_in_tracking_era: pd.Series
+) -> None:
+    """oreb+dreb should equal reb exactly -- but only for a player whose
+    *entire* career falls within the OREB/DREB tracking era (1973-74+).
+    For a career straddling that boundary, reb_total covers their whole
+    career while oreb_total+dreb_total only covers the tracked portion by
+    construction (see build_dataset.py) -- that's correct, not a
+    violation, and checking it at the career level for a straddling
+    player would always show a "deficit" equal to their pre-1973-74
+    rebounds. `careers_fully_in_tracking_era` (indexed by player_id)
+    restricts the check to players it can't produce a false positive for.
+    """
+    oreb_col, dreb_col, reb_col = f"oreb{suffix}", f"dreb{suffix}", f"reb{suffix}"
+    if not all(c in df.columns for c in (oreb_col, dreb_col, reb_col)):
+        return
+    eligible_ids = careers_fully_in_tracking_era[careers_fully_in_tracking_era].index
+    both = df[
+        df["player_id"].isin(eligible_ids)
+        & df[oreb_col].notna()
+        & df[dreb_col].notna()
+        & df[reb_col].notna()
+    ]
+    diff = (both[oreb_col] + both[dreb_col] - both[reb_col]).abs()
+    bad = both[diff > 1e-6]
+    check(
+        len(bad) == 0,
+        f"{name}: {len(bad)} rows (careers fully within 1973-74+) where "
+        f"{oreb_col}+{dreb_col} != {reb_col}",
+    )
+
+
+def verify_per_game_reconciles_with_total(
+    name: str, df: pd.DataFrame, always_tracked_stats: list[str]
+) -> None:
+    """total/gp should equal the stored per-game value, for stats tracked
+    the league's entire history. Era-gated stats are deliberately excluded:
+    their per-game denominator is tracked-seasons-only games, not blanket
+    career gp (see build_dataset.py), so this exact check doesn't apply to
+    them -- that distinction is exactly the bug scripts/audit_answers.py
+    caught previously; this check guards the always-tracked stats where
+    the two really must agree."""
+    for stat_key in always_tracked_stats:
+        total_col, pg_col = f"{stat_key}_total", f"{stat_key}_per_game"
+        if total_col not in df.columns or pg_col not in df.columns:
+            continue
+        both = df[df[total_col].notna() & df[pg_col].notna() & (df["gp"] > 0)]
+        recomputed = both[total_col] / both["gp"]
+        diff = (recomputed - both[pg_col]).abs()
+        bad = both[diff > 1e-4]
+        check(
+            len(bad) == 0,
+            f"{name}: {len(bad)} rows where {pg_col} doesn't reconcile with {total_col}/gp",
+        )
+
+
 def print_top5(df: pd.DataFrame, col: str, label: str) -> None:
     if col not in df.columns:
         print(f"  (skipped: {col} not in table)")
@@ -114,6 +190,8 @@ def main() -> None:
     players = pd.read_parquet(DATA_PATH / "players.parquet")
 
     total_cols = [f"{k}_total" for k in STATS]
+    per_game_cols = [f"{k}_per_game" for k in STATS if STATS[k].per_game_col is not None]
+    always_tracked_stats = [k for k, v in STATS.items() if v.tracked_since is None]
 
     print("\n=== identity & duplicates ===")
     verify_identity("players", players)
@@ -125,11 +203,32 @@ def main() -> None:
     verify_games_played("career_totals", career_totals)
     verify_games_played("career_per_game", career_per_game)
 
+    print("\n=== numeric dtypes ===")
+    verify_numeric_dtypes("career_totals", career_totals, total_cols + ["gp"])
+    verify_numeric_dtypes("career_per_game", career_per_game, per_game_cols + ["gp"])
+
     print("\n=== monotonic ranks (career totals) ===")
     verify_monotonic_ranks("career_totals", career_totals, total_cols)
 
     print("\n=== plausible per-game bounds ===")
     verify_per_game_bounds("career_per_game", career_per_game, "_per_game")
+
+    print("\n=== per-game reconciles with total/gp (always-tracked stats) ===")
+    verify_per_game_reconciles_with_total("career_per_game", career_per_game, always_tracked_stats)
+
+    print("\n=== made <= attempted ===")
+    for made, att in [("fgm", "fga"), ("fg3m", "fg3a"), ("ftm", "fta")]:
+        verify_made_le_attempted("career_totals", career_totals, f"{made}_total", f"{att}_total")
+        verify_made_le_attempted(
+            "career_per_game", career_per_game, f"{made}_per_game", f"{att}_per_game"
+        )
+
+    print("\n=== offensive + defensive rebounds = total rebounds (careers fully in tracking era) ===")
+    fully_tracked = (
+        players.set_index("player_id")["first_season"].fillna("") >= "1973-74"
+    )
+    verify_oreb_dreb_sum_to_reb("career_totals", career_totals, "_total", fully_tracked)
+    verify_oreb_dreb_sum_to_reb("career_per_game", career_per_game, "_per_game", fully_tracked)
 
     print("\n=== referential integrity ===")
     player_ids = set(players["player_id"].unique())
