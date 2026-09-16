@@ -39,6 +39,8 @@ def init_state() -> None:
     ss.setdefault("scores", {})
     ss.setdefault("current_round", 0)
     ss.setdefault("used_question_keys", set())
+    ss.setdefault("recent_stats", [])
+    ss.setdefault("recent_scopes", [])
     ss.setdefault("current_question", None)
     ss.setdefault("collect_index", 0)
     ss.setdefault("collect_gate_shown", True)
@@ -61,6 +63,8 @@ def start_game(players: list[str], num_rounds: int, game_config: GameConfig | No
     ss.scores = {p: 0 for p in players}
     ss.current_round = 0
     ss.used_question_keys = set()
+    ss.recent_stats = []
+    ss.recent_scopes = []
     _start_new_round()
 
 
@@ -69,9 +73,18 @@ def _start_new_round() -> None:
     ss.current_round += 1
     rng = random.Random()
     ss.current_question = generate_question(
-        tables(), ss.game_config, ss.used_question_keys, rng=rng
+        tables(),
+        ss.game_config,
+        ss.used_question_keys,
+        recent_stats=ss.recent_stats,
+        recent_scopes=ss.recent_scopes,
+        round_number=ss.current_round,
+        total_rounds=ss.num_rounds,
+        rng=rng,
     )
     ss.used_question_keys.add(ss.current_question.key)
+    ss.recent_stats.append(ss.current_question.stat_key)
+    ss.recent_scopes.append(ss.current_question.scope.value)
     ss.collect_index = 0
     # Solo play has no one to hand the laptop to, so skip the gate screen.
     ss.collect_gate_shown = len(ss.players) > 1
@@ -110,6 +123,7 @@ def reveal_and_score() -> list[ScoredGuess]:
     scored = score_round(
         list(ss.guesses.values()),
         q.target_rank,
+        answer_value=q.anchor_value if q.scoring_mode == "value" else None,
         round_points=ss.game_config.round_points,
         exact_match_bonus_points=ss.game_config.exact_match_bonus_points,
     )
@@ -139,6 +153,8 @@ def play_again() -> None:
     ss.scores = {p: 0 for p in ss.players}
     ss.current_round = 0
     ss.used_question_keys = set()
+    ss.recent_stats = []
+    ss.recent_scopes = []
     _start_new_round()
 
 
@@ -166,6 +182,8 @@ def checkpoint() -> None:
         "scores": dict(ss.scores),
         "current_round": ss.current_round,
         "used_question_keys": set(ss.used_question_keys),
+        "recent_stats": list(ss.recent_stats),
+        "recent_scopes": list(ss.recent_scopes),
     }
 
 
@@ -179,6 +197,8 @@ def recover_to_scoreboard() -> None:
         ss.scores = cp["scores"]
         ss.current_round = cp["current_round"]
         ss.used_question_keys = cp["used_question_keys"]
+        ss.recent_stats = cp.get("recent_stats", [])
+        ss.recent_scopes = cp.get("recent_scopes", [])
         ss.phase = Phase.SCOREBOARD
     else:
         ss.phase = Phase.LOBBY

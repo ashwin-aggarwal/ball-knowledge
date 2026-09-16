@@ -128,7 +128,7 @@ def render_reveal() -> None:
         rank_display=f"#{q.target_rank}",
     )
     st.markdown("#### Guesses, closest first")
-    components.render_guess_strip(scored)
+    components.render_guess_strip(scored, scoring_mode=q.scoring_mode)
     _, mid, _ = st.columns([1, 1, 1])
     with mid:
         if st.button("See scoreboard", width="stretch"):

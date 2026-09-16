@@ -51,7 +51,7 @@ class StatDef:
     key: str
     label: str
     totals_col: str
-    per_game_col: str
+    per_game_col: str | None
     tracked_since: str | None = None
 
     def era_caveat(self) -> str | None:
@@ -100,10 +100,13 @@ STATS: dict[str, StatDef] = {
     ),
     "ftm": StatDef("ftm", "Free throws made", "ftm_total", "ftm_per_game"),
     "fta": StatDef("fta", "Free throws attempted", "fta_total", "fta_per_game"),
+    # Games played doubles as the eligibility axis (the `gp` column) *and*
+    # a legitimately fun obscure-stat spotlight ("who's played the most
+    # games all time") -- but only as a total: "games played per game" is
+    # meaningless, so per_game_col is None and it's excluded from any
+    # per-game stat allowlist.
+    "gp": StatDef("gp", "Games played", "gp", None),
 }
-
-# games played is not itself a guessable stat (it's the eligibility axis),
-# so it is intentionally excluded from STATS / STAT_ALLOWLIST.
 
 
 @dataclass(frozen=True)
@@ -158,8 +161,55 @@ class GameConfig:
 
     # Stats eligible per dataset scope. Same catalogue for both today, but
     # kept separate so a scope can be pared down without touching STATS.
+    # career_per_game_stats excludes any stat with no per_game_col (just
+    # "gp" today) automatically -- "games played per game" is meaningless.
     career_total_stats: tuple[str, ...] = tuple(STATS.keys())
-    career_per_game_stats: tuple[str, ...] = tuple(STATS.keys())
+    career_per_game_stats: tuple[str, ...] = tuple(
+        k for k, v in STATS.items() if v.per_game_col is not None
+    )
+
+    # --- Question variety: cooldowns, weighting, templates, difficulty ---
+
+    # A stat cannot reappear for this many rounds (cooldown is on the stat
+    # itself, not the stat+rank pair -- rank 47 and rank 62 in points are
+    # formally distinct questions but feel identical to a player). If the
+    # cooldown would empty the eligible stat pool (a short allowlist, a
+    # long game), it relaxes by one round at a time rather than failing.
+    stat_cooldown_rounds: int = 3
+    # A dataset scope cannot appear more than this many times in a row.
+    scope_max_consecutive: int = 2
+
+    # Marquee stats (the ones people think in) are down-weighted so the
+    # game doesn't feel points-heavy under uniform sampling. marquee_stats
+    # share marquee_weight_share of the pick probability; everything else
+    # in the allowlist splits the remainder.
+    marquee_stats: tuple[str, ...] = ("pts", "reb", "ast")
+    marquee_weight_share: float = 0.40
+
+    # Deliberately unglamorous stats a template can spotlight -- these
+    # leaderboards are full of unexpected names.
+    obscure_stats: tuple[str, ...] = ("pf", "tov", "min", "gp", "fta")
+
+    # Which question template a round uses. "straight_rank" is the
+    # existing "who ranks Nth" shape; "value_anchor" asks who sits closest
+    # to a round counting-stat number (never a per-game stat -- round
+    # numbers on rate stats cluster players within hundredths of each
+    # other and collapse into a coin flip); "obscure_spotlight" is
+    # straight_rank with its stat forced from obscure_stats.
+    template_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "straight_rank": 0.55,
+            "value_anchor": 0.20,
+            "obscure_spotlight": 0.25,
+        }
+    )
+
+    # Difficulty arc: early rounds sample shallower ranks (easier, more
+    # recognizable names), later rounds go deeper. Expressed as two rank-
+    # sampling skew values interpolated across the game's round count;
+    # set them equal to flatten the arc back to a constant skew.
+    early_rank_skew: float = 3.0
+    late_rank_skew: float = 1.4
 
     def dataset_config(self, scope: DatasetScope) -> DatasetConfig:
         """Resolve full knobs for one (scope, value_kind) question shape."""

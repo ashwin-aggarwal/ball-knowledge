@@ -1,12 +1,19 @@
 """Round scoring. Pure functions over plain data, zero Streamlit imports.
 
-Scoring is by rank distance: how many leaderboard spots a guessed player
-sits from the rank the question actually asked about. Guessing the 52nd
-all-time player when the question asked about 50th is "off by 2"; another
-guesser naming the 45th all-time player is "off by 5" and loses the round
-even though their player's raw stat value might sit closer to the answer's
-value than the first guess's does. Rank position, not stat value, is what
-players intuitively compare a guess against.
+Two scoring modes, chosen by the question's template:
+
+- "rank" (straight_rank, obscure_spotlight): distance is how many
+  leaderboard spots a guessed player sits from the rank the question
+  actually asked about. Guessing the 52nd all-time player when the
+  question asked about 50th is "off by 2"; another guesser naming the
+  45th all-time player is "off by 5" and loses even though their
+  player's raw stat value might sit closer to the answer's value.
+  Rank position, not stat value, is what players intuitively compare a
+  guess against for this kind of question.
+- "value" (value_anchor): distance is |guess value - anchor value|.
+  A value-anchor question ("who's closest to exactly 15,000 rebounds")
+  is framed entirely in terms of the stat's value, not a leaderboard
+  position, so that's what a guess should be measured against.
 """
 from __future__ import annotations
 
@@ -26,14 +33,14 @@ class GuessInput:
 
 @dataclass(frozen=True)
 class ScoredGuess:
-    """A guess annotated with its rank distance from the answer and points won."""
+    """A guess annotated with its distance from the answer and points won."""
 
     guesser_name: str
     nba_player_id: int
     nba_player_name: str
     value: float | None
     rank: int
-    diff: int
+    diff: float
     points: int
     is_exact: bool
 
@@ -42,23 +49,34 @@ def score_round(
     guesses: list[GuessInput],
     answer_rank: int,
     *,
+    answer_value: float | None = None,
     round_points: int = 1,
     exact_match_bonus_points: int = 2,
 ) -> list[ScoredGuess]:
-    """Score every guess by |guess.rank - answer_rank| and rank by closeness.
+    """Score every guess and rank them by closeness to the answer.
 
-    The closest guess (smallest rank distance) earns `round_points`; if
-    that closest guess is exact (its player IS the answer, diff == 0) it
+    If `answer_value` is given, distance is |guess.value - answer_value|
+    (value-anchor questions); a guess with no value (an ineligible player)
+    is treated as infinitely far, never winning outright. Otherwise
+    distance is |guess.rank - answer_rank| (every other template).
+
+    The closest guess earns `round_points`; if it's exact (diff == 0) it
     earns `exact_match_bonus_points` instead (a total, not an addition on
-    top of `round_points`). All guesses tied for closest score identically.
-    Non-winning guesses score 0.
+    top of `round_points`). All guesses tied for closest score
+    identically. Non-winning guesses score 0.
 
     Returns guesses sorted ascending by diff (closest first).
     """
     if not guesses:
         return []
 
-    scored = [(g, abs(g.rank - answer_rank)) for g in guesses]
+    if answer_value is not None:
+        scored = [
+            (g, abs(g.value - answer_value) if g.value is not None else float("inf"))
+            for g in guesses
+        ]
+    else:
+        scored = [(g, abs(g.rank - answer_rank)) for g in guesses]
     min_diff = min(diff for _, diff in scored)
 
     results = []

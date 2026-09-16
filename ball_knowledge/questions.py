@@ -7,6 +7,24 @@ the parquet tables and hand the resulting DataFrames to this module.
 
 All-time career stats only: no single-season or single-playoff-run
 questions. Every DatasetScope is a career aggregate (see config.py).
+
+Three templates, chosen per round by weight (config.template_weights):
+- straight_rank: "who ranks Nth all time in X" -- the original shape.
+- value_anchor: "who's closest to exactly N career X" -- a round number
+  on a counting stat (never per-game: round numbers on a rate stat
+  cluster players within hundredths of each other and the round
+  collapses into a coin flip). Scored by value distance, not rank.
+- obscure_spotlight: straight_rank with its stat forced from
+  config.obscure_stats, so personal fouls/turnovers/minutes/games-played/
+  free-throw-volume rounds show up deliberately rather than only by
+  the luck of a uniform draw.
+
+Stat and scope cooldowns (config.stat_cooldown_rounds,
+scope_max_consecutive) and marquee-stat down-weighting
+(config.marquee_stats / marquee_weight_share) apply across all
+templates. A difficulty arc (config.early_rank_skew / late_rank_skew)
+biases early rounds toward shallow, recognizable ranks and later rounds
+deeper.
 """
 from __future__ import annotations
 
@@ -24,15 +42,21 @@ from ball_knowledge.config import (
     ValueKind,
 )
 
-# Question uniqueness key: (scope, stat_key, target_rank). value_kind is
-# omitted since it's fixed 1:1 by scope, so including it would be redundant.
+TEMPLATE_STRAIGHT_RANK = "straight_rank"
+TEMPLATE_VALUE_ANCHOR = "value_anchor"
+TEMPLATE_OBSCURE_SPOTLIGHT = "obscure_spotlight"
+
+# Question uniqueness key. For rank-based templates this is
+# (scope, stat_key, target_rank); for value_anchor it's
+# (scope, stat_key, int(anchor_value)) -- same shape, different meaning
+# in the third slot, which is fine since both mean "don't ask this exact
+# question again this session."
 QuestionKey = tuple[str, str, int]
 
-# Max attempts to find a fresh, satisfiable (scope, stat, rank) combination
-# before giving up. Generous: the combinatorial space is large (2 scopes x
-# 16 stats x up to 300 ranks) relative to any realistic game length, so
-# exhaustion only happens with tiny test fixtures that have deliberately
-# starved the space.
+# Max attempts to find a fresh, satisfiable question before giving up.
+# Generous relative to any realistic game length; exhaustion only
+# happens with tiny test fixtures that have deliberately starved the
+# space, or a pared-down stat allowlist across a very long game.
 MAX_GENERATION_ATTEMPTS = 500
 
 
@@ -53,6 +77,7 @@ class DataTables:
 @dataclass(frozen=True)
 class Question:
     key: QuestionKey
+    template: str
     question_text: str
     scope: DatasetScope
     value_kind: ValueKind
@@ -60,7 +85,9 @@ class Question:
     stat_label: str
     value_col: str
     min_games: int
+    scoring_mode: str  # "rank" or "value"
     target_rank: int
+    anchor_value: float | None
     answer_player_id: int
     answer_player_name: str
     answer_value: float
@@ -75,7 +102,7 @@ def _ordinal(n: int) -> str:
     return f"{n}{suffix}"
 
 
-def _question_text(
+def _question_text_rank(
     scope: DatasetScope,
     stat_label: str,
     target_rank: int,
@@ -87,6 +114,13 @@ def _question_text(
         text = f"Who ranks {rank_str} all time in career {label_lower}?"
     else:
         text = f"Who ranks {rank_str} all time in career {label_lower} per game?"
+    if era_caveat:
+        text = f"{text} {era_caveat}"
+    return text
+
+
+def _question_text_value_anchor(stat_label: str, anchor_value: float, era_caveat: str | None) -> str:
+    text = f"Which player sits closest to exactly {anchor_value:,.0f} career {stat_label.lower()}?"
     if era_caveat:
         text = f"{text} {era_caveat}"
     return text
@@ -113,7 +147,11 @@ def eligible_pool(
         return pd.DataFrame(columns=["player_id", "full_name", "value", "rank", "gp"])
 
     eligible["rank"] = eligible[value_col].rank(method="min", ascending=False).astype(int)
-    eligible = eligible.rename(columns={value_col: "value"})
+    # Assign rather than rename: value_col can legitimately be "gp" itself
+    # (games played is both the eligibility axis and a guessable stat), in
+    # which case a rename would clobber the very "gp" column the return
+    # statement below still needs.
+    eligible["value"] = eligible[value_col]
     eligible = eligible.merge(players[["player_id", "full_name"]], on="player_id", how="left")
     eligible = eligible.sort_values("rank")
     return eligible[["player_id", "full_name", "value", "rank", "gp"]].reset_index(drop=True)
@@ -130,69 +168,294 @@ def _sample_rank(rng: random.Random, available_ranks: list[int], rank_range: Ran
     return in_range[idx]
 
 
-def _pick_scope(rng: random.Random, config: GameConfig) -> DatasetScope:
+def _effective_rank_range(
+    base: RankRange, config: GameConfig, round_number: int, total_rounds: int
+) -> RankRange:
+    """`base` with its skew interpolated along the difficulty arc.
+
+    t=0 at round 1 (early_rank_skew, shallow/easy), t=1 at the final
+    round (late_rank_skew, deeper). Setting early == late flattens the
+    arc back to a constant skew.
+    """
+    t = 0.0 if total_rounds <= 1 else (round_number - 1) / (total_rounds - 1)
+    t = max(0.0, min(1.0, t))
+    skew = config.early_rank_skew + (config.late_rank_skew - config.early_rank_skew) * t
+    return RankRange(low=base.low, high=base.high, skew=skew)
+
+
+def _cooldown_filtered_stats(
+    allowlist: tuple[str, ...], recent_stats: list[str], cooldown_rounds: int
+) -> tuple[str, ...]:
+    """`allowlist` minus any stat used in the last `cooldown_rounds` rounds.
+
+    Relaxes by shrinking the cooldown window one round at a time if that
+    would empty the pool (a short allowlist, a long game) -- this must
+    always return something non-empty when `allowlist` is non-empty.
+    """
+    window = cooldown_rounds
+    while window > 0:
+        excluded = set(recent_stats[-window:]) if recent_stats else set()
+        candidates = tuple(s for s in allowlist if s not in excluded)
+        if candidates:
+            return candidates
+        window -= 1
+    return allowlist
+
+
+def _blocked_scope_value(recent_scopes: list[str], max_consecutive: int) -> str | None:
+    """The scope value that's occupied every one of the last `max_consecutive`
+    rounds, if any -- it cannot legally appear again this round."""
+    if max_consecutive > 0 and len(recent_scopes) >= max_consecutive:
+        tail = recent_scopes[-max_consecutive:]
+        if len(set(tail)) == 1:
+            return tail[0]
+    return None
+
+
+def _cooldown_filtered_scopes(
+    scopes: list[DatasetScope],
+    weights: list[float],
+    recent_scopes: list[str],
+    max_consecutive: int,
+) -> tuple[list[DatasetScope], list[float]]:
+    """Drop a scope that's occupied every one of the last `max_consecutive` rounds."""
+    blocked = _blocked_scope_value(recent_scopes, max_consecutive)
+    if blocked is not None:
+        filtered = [(s, w) for s, w in zip(scopes, weights) if s.value != blocked]
+        if filtered:
+            return [s for s, _ in filtered], [w for _, w in filtered]
+    return scopes, weights
+
+
+def _weighted_stat_choice(
+    rng: random.Random, allowlist: tuple[str, ...], config: GameConfig
+) -> str:
+    """Pick a stat; marquee_stats share marquee_weight_share of the mass."""
+    marquee_in = [s for s in allowlist if s in config.marquee_stats]
+    rest_in = [s for s in allowlist if s not in config.marquee_stats]
+    if not marquee_in or not rest_in:
+        return rng.choice(allowlist)
+    marquee_w = config.marquee_weight_share / len(marquee_in)
+    rest_w = (1 - config.marquee_weight_share) / len(rest_in)
+    population = marquee_in + rest_in
+    weights = [marquee_w] * len(marquee_in) + [rest_w] * len(rest_in)
+    return rng.choices(population, weights=weights, k=1)[0]
+
+
+def _pick_scope(
+    rng: random.Random, config: GameConfig, recent_scopes: list[str]
+) -> DatasetScope:
     scopes = list(config.dataset_weights.keys())
     weights = [config.dataset_weights[s] for s in scopes]
+    scopes, weights = _cooldown_filtered_scopes(
+        scopes, weights, recent_scopes, config.scope_max_consecutive
+    )
     return rng.choices(scopes, weights=weights, k=1)[0]
+
+
+def _pick_template(rng: random.Random, config: GameConfig) -> str:
+    names = list(config.template_weights.keys())
+    weights = [config.template_weights[n] for n in names]
+    return rng.choices(names, weights=weights, k=1)[0]
+
+
+def _value_anchor_step(max_value: float) -> float:
+    """A 'round number' step sized to the stat's magnitude (e.g. 1000 for
+    a stat maxing in the tens of thousands, 100 for one maxing in the
+    thousands)."""
+    if max_value <= 0:
+        return 1.0
+    digits = len(str(int(max_value)))
+    return float(10 ** max(digits - 2, 0))
+
+
+def _build_rank_question(
+    tables: DataTables,
+    config: GameConfig,
+    rng: random.Random,
+    recent_stats: list[str],
+    recent_scopes: list[str],
+    round_number: int,
+    total_rounds: int,
+    used_keys: set[QuestionKey],
+    template: str,
+) -> Question | None:
+    """Builds straight_rank or obscure_spotlight. Returns None if this
+    particular (scope, stat) draw isn't satisfiable right now (empty
+    pool) or collides with `used_keys` -- the caller retries."""
+    scope = _pick_scope(rng, config, recent_scopes)
+    dataset_config = config.dataset_config(scope)
+    value_kind = dataset_config.value_kind
+
+    if template == TEMPLATE_OBSCURE_SPOTLIGHT:
+        base_allowlist = tuple(
+            s for s in config.obscure_stats if s in dataset_config.stat_allowlist
+        )
+        if not base_allowlist:
+            return None
+        allowlist = _cooldown_filtered_stats(base_allowlist, recent_stats, config.stat_cooldown_rounds)
+        stat_key = rng.choice(allowlist)
+    else:
+        allowlist = _cooldown_filtered_stats(
+            dataset_config.stat_allowlist, recent_stats, config.stat_cooldown_rounds
+        )
+        stat_key = _weighted_stat_choice(rng, allowlist, config)
+
+    stat_def: StatDef = STATS[stat_key]
+    value_col = stat_def.totals_col if value_kind is ValueKind.TOTAL else stat_def.per_game_col
+    table = tables.stat_table(scope)
+    pool = eligible_pool(
+        table, tables.players, value_col=value_col, min_games=dataset_config.min_games
+    )
+    if pool.empty:
+        return None
+
+    rank_range = _effective_rank_range(dataset_config.rank_range, config, round_number, total_rounds)
+    available_ranks = sorted(pool["rank"].unique().tolist())
+    target_rank = _sample_rank(rng, available_ranks, rank_range)
+    key: QuestionKey = (scope.value, stat_key, target_rank)
+    if key in used_keys:
+        return None
+
+    answer_row = pool[pool["rank"] == target_rank].iloc[0]
+    era_caveat = stat_def.era_caveat()
+    question_text = _question_text_rank(scope, stat_def.label, target_rank, era_caveat)
+
+    return Question(
+        key=key,
+        template=template,
+        question_text=question_text,
+        scope=scope,
+        value_kind=value_kind,
+        stat_key=stat_key,
+        stat_label=stat_def.label,
+        value_col=value_col,
+        min_games=dataset_config.min_games,
+        scoring_mode="rank",
+        target_rank=target_rank,
+        anchor_value=None,
+        answer_player_id=int(answer_row["player_id"]),
+        answer_player_name=str(answer_row["full_name"]),
+        answer_value=float(answer_row["value"]),
+        era_caveat=era_caveat,
+    )
+
+
+def _build_value_anchor_question(
+    tables: DataTables,
+    config: GameConfig,
+    rng: random.Random,
+    recent_stats: list[str],
+    recent_scopes: list[str],
+    used_keys: set[QuestionKey],
+) -> Question | None:
+    """Restricted to CAREER_TOTAL (counting stats only): round numbers on
+    a per-game stat cluster players within hundredths of each other and
+    the round collapses into a coin flip."""
+    scope = DatasetScope.CAREER_TOTAL
+    # This template's scope is fixed, unlike straight_rank/obscure_spotlight
+    # which pick among all scopes -- but the scope cooldown still applies
+    # globally, so if CAREER_TOTAL is currently blocked, this template
+    # simply isn't satisfiable this round; the caller retries with another.
+    if _blocked_scope_value(recent_scopes, config.scope_max_consecutive) == scope.value:
+        return None
+    dataset_config = config.dataset_config(scope)
+    allowlist = _cooldown_filtered_stats(
+        dataset_config.stat_allowlist, recent_stats, config.stat_cooldown_rounds
+    )
+    stat_key = _weighted_stat_choice(rng, allowlist, config)
+    stat_def: StatDef = STATS[stat_key]
+    value_col = stat_def.totals_col
+    table = tables.stat_table(scope)
+    pool = eligible_pool(
+        table, tables.players, value_col=value_col, min_games=dataset_config.min_games
+    )
+    if len(pool) < 2:
+        return None
+
+    min_val = float(pool["value"].min())
+    max_val = float(pool["value"].max())
+    step = _value_anchor_step(max_val)
+    anchor = round(rng.uniform(min_val, max_val) / step) * step
+    anchor = max(min_val, min(max_val, anchor))
+
+    diffs = (pool["value"] - anchor).abs()
+    answer_row = pool.loc[diffs.idxmin()]
+
+    key: QuestionKey = (scope.value, stat_key, int(anchor))
+    if key in used_keys:
+        return None
+
+    era_caveat = stat_def.era_caveat()
+    question_text = _question_text_value_anchor(stat_def.label, anchor, era_caveat)
+
+    return Question(
+        key=key,
+        template=TEMPLATE_VALUE_ANCHOR,
+        question_text=question_text,
+        scope=scope,
+        value_kind=ValueKind.TOTAL,
+        stat_key=stat_key,
+        stat_label=stat_def.label,
+        value_col=value_col,
+        min_games=dataset_config.min_games,
+        scoring_mode="value",
+        target_rank=int(answer_row["rank"]),
+        anchor_value=float(anchor),
+        answer_player_id=int(answer_row["player_id"]),
+        answer_player_name=str(answer_row["full_name"]),
+        answer_value=float(answer_row["value"]),
+        era_caveat=era_caveat,
+    )
 
 
 def generate_question(
     tables: DataTables,
     config: GameConfig,
     used_keys: set[QuestionKey],
+    recent_stats: list[str] | None = None,
+    recent_scopes: list[str] | None = None,
+    round_number: int = 1,
+    total_rounds: int = 1,
     rng: random.Random | None = None,
 ) -> Question:
     """Generate one question not already present in `used_keys`.
 
-    Raises RuntimeError if no satisfiable, unused combination is found
-    within MAX_GENERATION_ATTEMPTS attempts (only realistic with a tiny or
+    `recent_stats`/`recent_scopes` (most-recent-last) drive the stat and
+    scope cooldowns; `round_number`/`total_rounds` drive the difficulty
+    arc. All four are optional and default to "no history" so existing
+    callers/tests that don't care about cooldowns or the arc keep working
+    unchanged.
+
+    Raises RuntimeError if no satisfiable, unused question is found within
+    MAX_GENERATION_ATTEMPTS attempts (only realistic with a tiny or
     exhausted question space, e.g. small test fixtures or a very long
     game against a pared-down stat allowlist).
     """
     rng = rng or random.Random()
+    recent_stats = recent_stats or []
+    recent_scopes = recent_scopes or []
 
     for _ in range(MAX_GENERATION_ATTEMPTS):
-        scope = _pick_scope(rng, config)
-        dataset_config = config.dataset_config(scope)
-        value_kind = dataset_config.value_kind
-        stat_key = rng.choice(dataset_config.stat_allowlist)
-        stat_def: StatDef = STATS[stat_key]
-
-        value_col = (
-            stat_def.totals_col if value_kind is ValueKind.TOTAL else stat_def.per_game_col
-        )
-        table = tables.stat_table(scope)
-        pool = eligible_pool(
-            table, tables.players, value_col=value_col, min_games=dataset_config.min_games
-        )
-        if pool.empty:
-            continue
-
-        available_ranks = sorted(pool["rank"].unique().tolist())
-        target_rank = _sample_rank(rng, available_ranks, dataset_config.rank_range)
-        key: QuestionKey = (scope.value, stat_key, target_rank)
-        if key in used_keys:
-            continue
-
-        answer_row = pool[pool["rank"] == target_rank].iloc[0]
-        era_caveat = stat_def.era_caveat()
-        question_text = _question_text(scope, stat_def.label, target_rank, era_caveat)
-
-        return Question(
-            key=key,
-            question_text=question_text,
-            scope=scope,
-            value_kind=value_kind,
-            stat_key=stat_key,
-            stat_label=stat_def.label,
-            value_col=value_col,
-            min_games=dataset_config.min_games,
-            target_rank=target_rank,
-            answer_player_id=int(answer_row["player_id"]),
-            answer_player_name=str(answer_row["full_name"]),
-            answer_value=float(answer_row["value"]),
-            era_caveat=era_caveat,
-        )
+        template = _pick_template(rng, config)
+        if template == TEMPLATE_VALUE_ANCHOR:
+            question = _build_value_anchor_question(
+                tables, config, rng, recent_stats, recent_scopes, used_keys
+            )
+        else:
+            question = _build_rank_question(
+                tables,
+                config,
+                rng,
+                recent_stats,
+                recent_scopes,
+                round_number,
+                total_rounds,
+                used_keys,
+                template,
+            )
+        if question is not None:
+            return question
 
     raise RuntimeError(
         f"Could not generate a fresh question after {MAX_GENERATION_ATTEMPTS} attempts; "

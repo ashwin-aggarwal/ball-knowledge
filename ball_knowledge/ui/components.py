@@ -107,17 +107,25 @@ def render_card_front(
     )
 
 
-def render_guess_strip(scored: list[ScoredGuess]) -> None:
-    """Every guess as a headshot with the guesser's name below, closest first."""
+def render_guess_strip(scored: list[ScoredGuess], *, scoring_mode: str = "rank") -> None:
+    """Every guess as a headshot with the guesser's name below, closest first.
+
+    `scoring_mode` matches the question's: "rank" (most templates) labels
+    the gap in leaderboard spots; "value" (value_anchor) labels it in the
+    stat's own units, since the gap there is a value distance, not a
+    position on a leaderboard.
+    """
     cards = []
     for s in scored:
         photo_html = _photo_html(s.nba_player_id, s.nba_player_name, css_class="bk-guess-photo")
         variant = " bk-guess-card--exact" if s.is_exact else ""
         if s.is_exact:
             diff_label = "exact match"
+        elif scoring_mode == "value":
+            diff_label = f"off by {s.diff:,.0f}"
         else:
             spot_word = "spot" if s.diff == 1 else "spots"
-            diff_label = f"{s.diff} {spot_word} off"
+            diff_label = f"{s.diff:g} {spot_word} off"
         cards.append(
             f"""
             <div class="bk-guess-card{variant}">
