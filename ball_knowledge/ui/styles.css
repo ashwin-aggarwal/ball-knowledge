@@ -283,6 +283,16 @@
   font-weight: 600;
 }
 
+.bk-guesses-label {
+  text-align: center;
+  font-family: var(--bk-font-mono);
+  font-weight: 700;
+  text-decoration: underline;
+  font-size: 1.05rem;
+  color: var(--bk-card-stock);
+  margin: 14px 0 4px;
+}
+
 /* ---------- Guess strip (reveal) ---------- */
 .bk-guess-strip {
   display: flex;
@@ -299,6 +309,9 @@
   padding: 8px;
   text-align: center;
   box-shadow: 4px 5px 0 var(--bk-shadow);
+}
+.bk-guess-card--closest {
+  background: #cfe3c8; /* subtle flat green, period-ink not neon */
 }
 .bk-guess-card--exact {
   border-color: var(--bk-ink-red);
@@ -334,6 +347,7 @@
   font-size: 0.78rem;
   line-height: 1.2;
   margin-bottom: 3px;
+  color: var(--bk-ink);
 }
 .bk-guess-stat-line {
   font-family: var(--bk-font-mono);
@@ -410,6 +424,60 @@
   font-weight: 700;
   font-size: 1.15rem;
   color: var(--bk-card-stock);
+}
+
+/* ---------- Leaderboard neighbors (sidebar) ----------
+   Lives in st.sidebar, whose background is the theme's light
+   secondaryBackgroundColor (card-stock manila), not the dark page bg --
+   so this uses dark ink text, the opposite of the scoreboard above. */
+.bk-neighbors {
+  font-family: var(--bk-font-mono);
+}
+.bk-neighbors-title {
+  font-family: var(--bk-font-display);
+  font-size: 1rem;
+  color: var(--bk-ink);
+  margin-bottom: 8px;
+  letter-spacing: 0.02em;
+}
+.bk-neighbors-section {
+  display: flex;
+  flex-direction: column;
+}
+.bk-neighbor-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: 0.78rem;
+  color: var(--bk-ink);
+  border-bottom: 1px dashed rgba(33, 29, 21, 0.25);
+}
+.bk-neighbor-rank {
+  font-weight: 700;
+  color: var(--bk-ink-teal);
+  width: 2.6rem;
+  flex-shrink: 0;
+}
+.bk-neighbor-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bk-neighbor-value {
+  font-weight: 700;
+}
+.bk-neighbor-row--answer {
+  background: rgba(178, 58, 44, 0.12);
+  border: 2px solid var(--bk-ink-red);
+  border-radius: 6px;
+  padding: 6px 6px;
+  margin: 4px 0;
+  font-weight: 700;
+}
+.bk-neighbor-row--answer .bk-neighbor-rank {
+  color: var(--bk-ink-red);
 }
 
 /* ---------- Crash screen: a card that got printed wrong ---------- */

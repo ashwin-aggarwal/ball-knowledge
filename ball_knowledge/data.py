@@ -20,13 +20,13 @@ from ball_knowledge.questions import (  # noqa: F401 (re-exported)
     DataTables,
     eligible_players_for_question,
     eligible_pool,
+    leaderboard_neighbors,
     resolve_guess_value_and_rank,
     resolve_player_by_name,
 )
 
 REQUIRED_FILES = (
     "career_totals.parquet",
-    "career_per_game.parquet",
     "players.parquet",
 )
 
@@ -42,7 +42,6 @@ def load_tables(data_dir: str | Path = DATA_DIR) -> DataTables:
         )
     return DataTables(
         career_totals=pd.read_parquet(data_path / "career_totals.parquet"),
-        career_per_game=pd.read_parquet(data_path / "career_per_game.parquet"),
         players=pd.read_parquet(data_path / "players.parquet"),
     )
 

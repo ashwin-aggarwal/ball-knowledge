@@ -4,10 +4,10 @@
 Pulls candidate players from nba_api's AllTimeLeadersGrids endpoint, then
 career totals for each from PlayerCareerStats (season-by-season rows are
 fetched too, since they're bundled in the same call, but only used to
-compute a per-stat games-played denominator and each player's first/last
-season -- not written out, since single-season questions were cut).
-Writes data/career_totals.parquet, data/career_per_game.parquet,
-data/players.parquet and data/manifest.json.
+compute each player's first/last season -- not written out, since
+single-season questions were cut, and per-game/rate stats aren't part of
+the game at all). Writes data/career_totals.parquet, data/players.parquet
+and data/manifest.json.
 
 Every raw API response is cached to .cache/nba/ as JSON, keyed by endpoint
 and parameters, so a rerun after a dropped connection resumes instead of
@@ -304,9 +304,8 @@ def build_tables(
     candidate_ids: list[int],
     careers: dict[int, dict[str, Any]],
     static_by_id: dict[int, dict[str, Any]],
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     career_total_rows = []
-    per_game_rows = []
     player_rows = []
 
     for pid in candidate_ids:
@@ -321,39 +320,17 @@ def build_tables(
         if gp <= 0:
             continue
 
-        seasons = dedupe_season_rows(data["SeasonTotalsRegularSeason"])
-        valid_seasons = [s for s in seasons if (s.get("GP") or 0) > 0]
-
-        # Per-stat tracked-games denominator: games played only in seasons
-        # where that specific stat was recorded (non-null), not blanket
-        # career GP. A career spanning a stat's tracking start date (e.g.
-        # DREB from 1973-74) would otherwise have its per-game average
-        # diluted by games from untracked seasons that contributed 0 to
-        # the numerator but still counted in the denominator -- silently
-        # understating the average for anyone straddling that boundary.
-        tracked_gp_by_stat: dict[str, int] = {
-            stat_key: sum(s["GP"] for s in valid_seasons if s.get(api_col) is not None)
-            for stat_key, api_col in STAT_API_COL.items()
-        }
-
         row_total: dict[str, Any] = {"player_id": pid, "gp": gp}
-        row_pg: dict[str, Any] = {"player_id": pid, "gp": gp}
         for stat_key, api_col in STAT_API_COL.items():
-            val = career.get(api_col)
-            row_total[f"{stat_key}_total"] = val
-            tracked_gp = tracked_gp_by_stat[stat_key]
-            row_pg[f"{stat_key}_per_game"] = (
-                (val / tracked_gp) if (val is not None and tracked_gp > 0) else None
-            )
+            row_total[f"{stat_key}_total"] = career.get(api_col)
         career_total_rows.append(row_total)
-        per_game_rows.append(row_pg)
 
         # Season data is still fetched (it's bundled in the same
-        # PlayerCareerStats call as career totals) and used above for the
-        # per-stat tracked-games denominator and here for first/last
-        # season -- just no longer written out as its own table, since
+        # PlayerCareerStats call as career totals) and used here only for
+        # first/last season -- not written out as its own table, since
         # single-season questions were cut entirely.
-        season_ids = [s["SEASON_ID"] for s in valid_seasons]
+        seasons = dedupe_season_rows(data["SeasonTotalsRegularSeason"])
+        season_ids = [s["SEASON_ID"] for s in seasons if (s.get("GP") or 0) > 0]
 
         static_info = static_by_id.get(pid, {})
         player_rows.append(
@@ -367,9 +344,8 @@ def build_tables(
         )
 
     career_totals_df = pd.DataFrame(career_total_rows)
-    career_per_game_df = pd.DataFrame(per_game_rows)
     players_df = pd.DataFrame(player_rows)
-    return career_totals_df, career_per_game_df, players_df
+    return career_totals_df, players_df
 
 
 def attach_headshot_flags(
@@ -390,10 +366,59 @@ def attach_headshot_flags(
     return players_df
 
 
+ROW_COUNT_DROP_TOLERANCE = 0.20  # a table shrinking more than 20% aborts the write
+
+
+def check_row_count_sanity(
+    data_dir: Path, new_row_counts: dict[str, int], allow_shrink: bool
+) -> None:
+    """Refuse to overwrite the dataset if any table shrank suspiciously.
+
+    Compares against the *previous* manifest.json's row_counts, read
+    before this build's parquet files are written -- a table that
+    suddenly halves in size usually means a partial fetch (dropped
+    connection, an early exit) got written as if it were a complete
+    build, not a real change in the underlying data. `--limit` runs are
+    expected to look like a drop and set `allow_shrink` themselves.
+    """
+    old_manifest_path = data_dir / "manifest.json"
+    if not old_manifest_path.exists():
+        return
+    with old_manifest_path.open("r") as f:
+        old_row_counts = json.load(f).get("row_counts", {})
+
+    problems = []
+    for table, new_count in new_row_counts.items():
+        old_count = old_row_counts.get(table)
+        if not old_count:
+            continue
+        drop = (old_count - new_count) / old_count
+        if drop > ROW_COUNT_DROP_TOLERANCE:
+            problems.append(
+                f"{table}: {old_count} -> {new_count} rows "
+                f"({drop:.0%} drop, tolerance is {ROW_COUNT_DROP_TOLERANCE:.0%})"
+            )
+
+    if problems and not allow_shrink:
+        message = (
+            "Refusing to write: row count(s) dropped more than "
+            f"{ROW_COUNT_DROP_TOLERANCE:.0%} versus the previous build "
+            "(looks like a partial fetch, not a real change):\n  "
+            + "\n  ".join(problems)
+            + "\nIf this drop is real and expected (e.g. a deliberate --limit run "
+            "or a genuine data cleanup), pass --allow-row-count-shrink."
+        )
+        log.error(message)
+        raise SystemExit(1)
+    if problems:
+        log.warning(
+            "Row count drop(s) allowed via --allow-row-count-shrink:\n  " + "\n  ".join(problems)
+        )
+
+
 def write_manifest(
     data_dir: Path,
     career_totals_df: pd.DataFrame,
-    career_per_game_df: pd.DataFrame,
     players_df: pd.DataFrame,
     candidate_pool_size: int,
     stats: BuildStats,
@@ -408,7 +433,6 @@ def write_manifest(
         "candidate_pool_size": candidate_pool_size,
         "row_counts": {
             "career_totals": len(career_totals_df),
-            "career_per_game": len(career_per_game_df),
             "players": len(players_df),
         },
         # Coverage of career first/last seasons across all candidates.
@@ -451,6 +475,15 @@ def main() -> None:
         "--skip-headshot-check",
         action="store_true",
         help="Skip the per-player CDN HEAD-check pass (faster smoke runs)",
+    )
+    parser.add_argument(
+        "--allow-row-count-shrink",
+        action="store_true",
+        help=(
+            "Allow writing even if a table's row count dropped more than "
+            f"{ROW_COUNT_DROP_TOLERANCE:.0%} versus the previous build "
+            "(expected for a deliberate --limit run)"
+        ),
     )
     args = parser.parse_args()
 
@@ -497,13 +530,10 @@ def main() -> None:
             )
 
     log.info("Building tables...")
-    career_totals_df, career_per_game_df, players_df = build_tables(
-        candidate_ids, careers, static_by_id
-    )
+    career_totals_df, players_df = build_tables(candidate_ids, careers, static_by_id)
     log.info(
-        "  career_totals=%d career_per_game=%d players=%d",
+        "  career_totals=%d players=%d",
         len(career_totals_df),
-        len(career_per_game_df),
         len(players_df),
     )
 
@@ -514,15 +544,22 @@ def main() -> None:
         players_df = players_df.copy()
         players_df["headshot_available"] = None
 
+    check_row_count_sanity(
+        data_dir,
+        {
+            "career_totals": len(career_totals_df),
+            "players": len(players_df),
+        },
+        allow_shrink=args.allow_row_count_shrink or args.limit is not None,
+    )
+
     log.info("Writing parquet files to %s ...", data_dir)
     career_totals_df.to_parquet(data_dir / "career_totals.parquet", index=False)
-    career_per_game_df.to_parquet(data_dir / "career_per_game.parquet", index=False)
     players_df.to_parquet(data_dir / "players.parquet", index=False)
 
     write_manifest(
         data_dir,
         career_totals_df,
-        career_per_game_df,
         players_df,
         len(candidate_ids),
         stats,

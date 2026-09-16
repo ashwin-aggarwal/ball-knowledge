@@ -1,19 +1,17 @@
-"""Question generation over the career stat tables.
+"""Question generation over the career totals table.
 
 Pure and Streamlit-free by design (see file structure notes in the project
 brief): this module never imports streamlit, and never imports data.py
 (which does, for its @st.cache_data wrappers). data.py is expected to load
 the parquet tables and hand the resulting DataFrames to this module.
 
-All-time career stats only: no single-season or single-playoff-run
-questions. Every DatasetScope is a career aggregate (see config.py).
+All-time career counting-stat totals only: no single-season/single-
+playoff-run questions, and no per-game/rate stats.
 
 Three templates, chosen per round by weight (config.template_weights):
 - straight_rank: "who ranks Nth all time in X" -- the original shape.
 - value_anchor: "who's closest to exactly N career X" -- a round number
-  on a counting stat (never per-game: round numbers on a rate stat
-  cluster players within hundredths of each other and the round
-  collapses into a coin flip). Scored by value distance, not rank.
+  on a counting stat. Scored by value distance, not rank.
 - obscure_spotlight: straight_rank with its stat forced from
   config.obscure_stats, so personal fouls/turnovers/minutes/games-played/
   free-throw-volume rounds show up deliberately rather than only by
@@ -40,7 +38,6 @@ from ball_knowledge.config import (
     GameConfig,
     RankRange,
     StatDef,
-    ValueKind,
 )
 
 log = logging.getLogger(__name__)
@@ -65,16 +62,13 @@ MAX_GENERATION_ATTEMPTS = 500
 
 @dataclass(frozen=True)
 class DataTables:
-    """Bundles the career stat tables plus players, keyed by player_id."""
+    """Bundles the career totals table plus players, keyed by player_id."""
 
     career_totals: pd.DataFrame
-    career_per_game: pd.DataFrame
     players: pd.DataFrame
 
     def stat_table(self, scope: DatasetScope) -> pd.DataFrame:
-        if scope is DatasetScope.CAREER_TOTAL:
-            return self.career_totals
-        return self.career_per_game
+        return self.career_totals
 
 
 @dataclass(frozen=True)
@@ -83,7 +77,6 @@ class Question:
     template: str
     question_text: str
     scope: DatasetScope
-    value_kind: ValueKind
     stat_key: str
     stat_label: str
     value_col: str
@@ -105,18 +98,8 @@ def _ordinal(n: int) -> str:
     return f"{n}{suffix}"
 
 
-def _question_text_rank(
-    scope: DatasetScope,
-    stat_label: str,
-    target_rank: int,
-    era_caveat: str | None,
-) -> str:
-    rank_str = _ordinal(target_rank)
-    label_lower = stat_label.lower()
-    if scope is DatasetScope.CAREER_TOTAL:
-        text = f"Who ranks {rank_str} all time in career {label_lower}?"
-    else:
-        text = f"Who ranks {rank_str} all time in career {label_lower} per game?"
+def _question_text_rank(stat_label: str, target_rank: int, era_caveat: str | None) -> str:
+    text = f"Who ranks {_ordinal(target_rank)} all time in career {stat_label.lower()}?"
     if era_caveat:
         text = f"{text} {era_caveat}"
     return text
@@ -136,7 +119,7 @@ def eligible_pool(
     value_col: str,
     min_games: int,
 ) -> pd.DataFrame:
-    """Rows of `table` eligible for a given stat/scope, ranked descending.
+    """Rows of `table` eligible for a given stat, ranked descending.
 
     Returns columns [player_id, full_name, value, rank, gp], sorted by
     rank ascending (best first). `rank` uses "min" ties (shared rank, next
@@ -165,6 +148,38 @@ def eligible_pool(
     eligible = eligible.merge(players[["player_id", "full_name"]], on="player_id", how="left")
     eligible = eligible.sort_values("rank")
     return eligible[["player_id", "full_name", "value", "rank", "gp"]].reset_index(drop=True)
+
+
+def leaderboard_neighbors(
+    pool: pd.DataFrame, target_rank: int, count: int
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The up-to-`count` closest ranks above and below `target_rank` in `pool`.
+
+    `pool` is expected already sorted by rank ascending (as returned by
+    eligible_pool). Returns (above, below): `above` is the rows with the
+    `count` next-best (lower-numbered) distinct ranks, closest-first;
+    `below` is the rows with the `count` next-worst (higher-numbered)
+    distinct ranks, closest-first. Either can come back with fewer than
+    `count` rows near either end of the leaderboard, and a tie can put
+    more than one row at a single rank.
+    """
+    ranks = sorted(pool["rank"].unique().tolist())
+    idx = ranks.index(target_rank) if target_rank in ranks else None
+    if idx is None:
+        return pool.iloc[0:0], pool.iloc[0:0]
+
+    above_ranks = ranks[max(0, idx - count):idx][::-1]  # closest-first
+    below_ranks = ranks[idx + 1: idx + 1 + count]
+
+    above = pool[pool["rank"].isin(above_ranks)].copy()
+    above["_order"] = above["rank"].map({r: i for i, r in enumerate(above_ranks)})
+    above = above.sort_values("_order").drop(columns="_order")
+
+    below = pool[pool["rank"].isin(below_ranks)].copy()
+    below["_order"] = below["rank"].map({r: i for i, r in enumerate(below_ranks)})
+    below = below.sort_values("_order").drop(columns="_order")
+
+    return above.reset_index(drop=True), below.reset_index(drop=True)
 
 
 def _sample_rank(rng: random.Random, available_ranks: list[int], rank_range: RankRange) -> int:
@@ -295,7 +310,6 @@ def _build_rank_question(
     pool) or collides with `used_keys` -- the caller retries."""
     scope = _pick_scope(rng, config, recent_scopes)
     dataset_config = config.dataset_config(scope)
-    value_kind = dataset_config.value_kind
 
     if template == TEMPLATE_OBSCURE_SPOTLIGHT:
         base_allowlist = tuple(
@@ -312,7 +326,7 @@ def _build_rank_question(
         stat_key = _weighted_stat_choice(rng, allowlist, config)
 
     stat_def: StatDef = STATS[stat_key]
-    value_col = stat_def.totals_col if value_kind is ValueKind.TOTAL else stat_def.per_game_col
+    value_col = stat_def.totals_col
     table = tables.stat_table(scope)
     pool = eligible_pool(
         table, tables.players, value_col=value_col, min_games=dataset_config.min_games
@@ -329,14 +343,13 @@ def _build_rank_question(
 
     answer_row = pool[pool["rank"] == target_rank].iloc[0]
     era_caveat = stat_def.era_caveat()
-    question_text = _question_text_rank(scope, stat_def.label, target_rank, era_caveat)
+    question_text = _question_text_rank(stat_def.label, target_rank, era_caveat)
 
     return Question(
         key=key,
         template=template,
         question_text=question_text,
         scope=scope,
-        value_kind=value_kind,
         stat_key=stat_key,
         stat_label=stat_def.label,
         value_col=value_col,
@@ -359,15 +372,21 @@ def _build_value_anchor_question(
     recent_scopes: list[str],
     used_keys: set[QuestionKey],
 ) -> Question | None:
-    """Restricted to CAREER_TOTAL (counting stats only): round numbers on
-    a per-game stat cluster players within hundredths of each other and
-    the round collapses into a coin flip."""
     scope = DatasetScope.CAREER_TOTAL
     # This template's scope is fixed, unlike straight_rank/obscure_spotlight
     # which pick among all scopes -- but the scope cooldown still applies
-    # globally, so if CAREER_TOTAL is currently blocked, this template
-    # simply isn't satisfiable this round; the caller retries with another.
-    if _blocked_scope_value(recent_scopes, config.scope_max_consecutive) == scope.value:
+    # globally, so if CAREER_TOTAL is currently blocked *and* some other
+    # scope exists to rotate to instead, this template isn't satisfiable
+    # this round; the caller retries with another. With only one scope
+    # configured (true today), there's no alternative to rotate to, so
+    # the cooldown must not block this template at all -- otherwise it
+    # would be near-permanently blocked (every scope value here is
+    # CAREER_TOTAL, so "the last N rounds were all this scope" becomes
+    # true almost immediately and stays true for the rest of the game).
+    if (
+        len(config.dataset_weights) > 1
+        and _blocked_scope_value(recent_scopes, config.scope_max_consecutive) == scope.value
+    ):
         return None
     dataset_config = config.dataset_config(scope)
     allowlist = _cooldown_filtered_stats(
@@ -404,7 +423,6 @@ def _build_value_anchor_question(
         template=TEMPLATE_VALUE_ANCHOR,
         question_text=question_text,
         scope=scope,
-        value_kind=ValueKind.TOTAL,
         stat_key=stat_key,
         stat_label=stat_def.label,
         value_col=value_col,
@@ -427,9 +445,9 @@ def _validate_question(question: Question, tables: DataTables) -> list[str]:
     it: an answer_value read back straight from the raw table (not the
     already-computed pool the question was built from), a rank/closeness
     recomputed from scratch, and question text that actually names the
-    stat and scope it's scoring against. Returns a list of failure
-    descriptions (empty means valid) rather than raising, so the caller
-    can log and resample instead of ever showing a bad question.
+    stat it's scoring against. Returns a list of failure descriptions
+    (empty means valid) rather than raising, so the caller can log and
+    resample instead of ever showing a bad question.
     """
     failures: list[str] = []
     table = tables.stat_table(question.scope)
@@ -477,17 +495,11 @@ def _validate_question(question: Question, tables: DataTables) -> list[str]:
                 f"anchor {question.anchor_value}; recomputation says player {closest_pid} is"
             )
 
-    text_lower = question.question_text.lower()
-    if question.stat_label.lower() not in text_lower:
+    if question.stat_label.lower() not in question.question_text.lower():
         failures.append(
             f"question_text {question.question_text!r} never mentions stat "
             f"label {question.stat_label!r}"
         )
-    mentions_per_game = "per game" in text_lower
-    if question.value_kind is ValueKind.PER_GAME and not mentions_per_game:
-        failures.append("PER_GAME question but question_text has no 'per game' wording")
-    if question.value_kind is ValueKind.TOTAL and mentions_per_game:
-        failures.append("TOTAL question but question_text mentions 'per game' anyway")
 
     return failures
 
@@ -587,8 +599,8 @@ def resolve_guess_value_and_rank(
     """A guessed player's (value, rank) for `question`.
 
     Any real player can be guessed, even one who doesn't qualify for this
-    specific stat/scope (no recorded value, or below the games floor) --
-    they're scored as one spot past the eligible pool's worst rank, so an
+    specific stat (no recorded value, or below the games floor) -- they're
+    scored as one spot past the eligible pool's worst rank, so an
     ineligible guess always loses to a legitimate one but is still
     accepted and recorded rather than rejected outright.
     """

@@ -6,8 +6,13 @@ import traceback
 import streamlit as st
 
 from ball_knowledge import state
-from ball_knowledge.config import DEFAULT_GAME_CONFIG, ValueKind
-from ball_knowledge.data import resolve_guess_value_and_rank, resolve_player_by_name
+from ball_knowledge.config import DEFAULT_GAME_CONFIG
+from ball_knowledge.data import (
+    eligible_players_for_question,
+    leaderboard_neighbors,
+    resolve_guess_value_and_rank,
+    resolve_player_by_name,
+)
 from ball_knowledge.scoring import GuessInput
 from ball_knowledge.state import Phase
 from ball_knowledge.ui import components
@@ -18,11 +23,7 @@ st.set_page_config(page_title="Ball Knowledge", page_icon="🏀")
 state.init_state()
 inject_theme()
 
-
-def _format_value(value: float, value_kind: ValueKind) -> str:
-    if value_kind is ValueKind.PER_GAME:
-        return f"{value:,.1f}"
-    return f"{value:,.0f}"
+VALUE_FMT = ",.0f"  # every stat left in the game is a career total
 
 
 def render_lobby() -> None:
@@ -124,17 +125,30 @@ def render_reveal() -> None:
     components.render_card_front(
         player_id=q.answer_player_id,
         player_name=q.answer_player_name,
-        value_display=f"{_format_value(q.answer_value, q.value_kind)} {q.stat_label}",
+        value_display=f"{format(q.answer_value, VALUE_FMT)} {q.stat_label}",
         rank_display=f"#{q.target_rank}",
     )
-    st.markdown("#### Guesses, closest first")
-    value_fmt = ",.1f" if q.value_kind is ValueKind.PER_GAME else ",.0f"
-    components.render_guess_strip(scored, scoring_mode=q.scoring_mode, value_display_fmt=value_fmt)
+    components.render_guesses_label()
+    components.render_guess_strip(scored, scoring_mode=q.scoring_mode, value_display_fmt=VALUE_FMT)
     _, mid, _ = st.columns([1, 1, 1])
     with mid:
         if st.button("See scoreboard", width="stretch"):
             state.apply_scores_and_go_to_scoreboard()
             st.rerun()
+
+    with st.sidebar:
+        pool = eligible_players_for_question(q, state.tables())
+        above, below = leaderboard_neighbors(
+            pool, q.target_rank, DEFAULT_GAME_CONFIG.reveal_neighbor_count
+        )
+        components.render_leaderboard_neighbors(
+            above,
+            below,
+            answer_rank=q.target_rank,
+            answer_name=q.answer_player_name,
+            answer_value=q.answer_value,
+            value_display_fmt=VALUE_FMT,
+        )
 
 
 def render_scoreboard() -> None:

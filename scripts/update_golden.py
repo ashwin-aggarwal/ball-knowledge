@@ -29,18 +29,12 @@ def main() -> None:
     config = DEFAULT_GAME_CONFIG
     snapshot: dict[str, list[int]] = {}
 
-    for scope in (DatasetScope.CAREER_TOTAL, DatasetScope.CAREER_PER_GAME):
+    for scope in (DatasetScope.CAREER_TOTAL,):
         dataset_config = config.dataset_config(scope)
         table = tables.stat_table(scope)
         for stat_key in dataset_config.stat_allowlist:
             stat_def = STATS[stat_key]
-            value_col = (
-                stat_def.totals_col
-                if dataset_config.value_kind.value == "total"
-                else stat_def.per_game_col
-            )
-            if value_col is None:
-                continue
+            value_col = stat_def.totals_col
             pool = eligible_pool(
                 table, tables.players, value_col=value_col, min_games=dataset_config.min_games
             )

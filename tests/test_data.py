@@ -8,7 +8,6 @@ from ball_knowledge.data import eligible_pool, load_manifest, load_tables
 
 def _write_tables(tmp_path, tables) -> None:
     tables.career_totals.to_parquet(tmp_path / "career_totals.parquet", index=False)
-    tables.career_per_game.to_parquet(tmp_path / "career_per_game.parquet", index=False)
     tables.players.to_parquet(tmp_path / "players.parquet", index=False)
 
 

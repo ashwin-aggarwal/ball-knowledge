@@ -107,6 +107,56 @@ def render_card_front(
     )
 
 
+def render_leaderboard_neighbors(
+    above,
+    below,
+    *,
+    answer_rank: int,
+    answer_name: str,
+    answer_value: float,
+    value_display_fmt: str = ",.0f",
+) -> None:
+    """The leaderboard context around the answer: up to N ranks immediately
+    above and below it, closest first, meant for the side of the screen.
+    `above`/`below` are DataFrames with columns [player_id, full_name,
+    value, rank] as returned by questions.leaderboard_neighbors -- either
+    can have fewer rows than requested near either end of the leaderboard.
+    """
+
+    def _row(rank: object, name: str, value: float, css: str = "") -> str:
+        return (
+            f'<div class="bk-neighbor-row {css}">'
+            f'<span class="bk-neighbor-rank">#{rank}</span>'
+            f'<span class="bk-neighbor-name">{name}</span>'
+            f'<span class="bk-neighbor-value">{format(value, value_display_fmt)}</span>'
+            f"</div>"
+        )
+
+    above_html = "".join(
+        _row(r["rank"], r["full_name"], r["value"]) for _, r in above.iterrows()
+    )
+    below_html = "".join(
+        _row(r["rank"], r["full_name"], r["value"]) for _, r in below.iterrows()
+    )
+    answer_html = _row(answer_rank, answer_name, answer_value, css="bk-neighbor-row--answer")
+
+    _markdown(
+        f"""
+        <div class="bk-neighbors">
+          <div class="bk-neighbors-title">On the leaderboard</div>
+          <div class="bk-neighbors-section">{above_html}</div>
+          {answer_html}
+          <div class="bk-neighbors-section">{below_html}</div>
+        </div>
+        """
+    )
+
+
+def render_guesses_label() -> None:
+    """Centered, bold, underlined "Guesses:" label under the reveal card."""
+    _markdown('<div class="bk-guesses-label">Guesses:</div>')
+
+
 def render_guess_strip(
     scored: list[ScoredGuess],
     *,
@@ -122,12 +172,19 @@ def render_guess_strip(
     own rank and stat total/average, regardless of scoring mode, so a
     guess is legible on its own terms even when it didn't win the round.
     `value_display_fmt` is a format-spec (e.g. ",.0f" for totals, ",.1f"
-    for per-game) applied to that value.
+    for per-game) applied to that value. The closest guess(es) -- the
+    round's actual winner(s), by diff, ties included -- get a subtle
+    green card background.
     """
+    min_diff = min((s.diff for s in scored), default=None)
     cards = []
     for s in scored:
         photo_html = _photo_html(s.nba_player_id, s.nba_player_name, css_class="bk-guess-photo")
-        variant = " bk-guess-card--exact" if s.is_exact else ""
+        variant = ""
+        if min_diff is not None and s.diff == min_diff:
+            variant += " bk-guess-card--closest"
+        if s.is_exact:
+            variant += " bk-guess-card--exact"
         if s.is_exact:
             diff_label = "exact match"
         elif scoring_mode == "value":

@@ -3,9 +3,10 @@
 
 Asserts invariants that must hold regardless of who currently sits atop
 any leaderboard (rankings change; we don't hardcode them here): no nulls
-in identity columns, no duplicate player ids per table, positive games
-played, strictly monotonic ranks when sorting descending, plausible
-per-game bounds, and referential integrity against players.parquet.
+in identity columns, no duplicate player ids, positive games played,
+strictly monotonic ranks when sorting descending, numeric dtypes,
+made<=attempted, oreb+dreb==reb (careers fully within the tracking era),
+and referential integrity against players.parquet.
 """
 from __future__ import annotations
 
@@ -19,30 +20,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from ball_knowledge.config import DATA_DIR, STATS  # noqa: E402
 
 DATA_PATH = Path(DATA_DIR)
-
-# Plausible per-game upper bounds, generous enough to never false-positive
-# on a real record but tight enough to catch a units/aggregation bug.
-# pts/min/fgm/fga are set just above Wilt Chamberlain's early-60s seasons
-# (50.4 PPG in 1961-62, 48.53 MPG the same season on 19.96 FGM/39.5 FGA)
-# -- the actual all-time single-season ceilings, not data errors.
-PER_GAME_BOUNDS = {
-    "pts": 55,
-    "reb": 30,
-    "oreb": 15,
-    "dreb": 20,
-    "ast": 15,
-    "stl": 5,
-    "blk": 6,
-    "tov": 8,
-    "pf": 6,
-    "min": 49,
-    "fgm": 22,
-    "fga": 42,
-    "fg3m": 8,
-    "fg3a": 20,
-    "ftm": 15,
-    "fta": 20,
-}
 
 failures: list[str] = []
 
@@ -82,15 +59,6 @@ def verify_monotonic_ranks(name: str, df: pd.DataFrame, stat_cols: list[str]) ->
         )
 
 
-def verify_per_game_bounds(name: str, df: pd.DataFrame, suffix: str) -> None:
-    for stat_key, bound in PER_GAME_BOUNDS.items():
-        col = f"{stat_key}{suffix}"
-        if col not in df.columns:
-            continue
-        over = df[df[col] > bound]
-        check(len(over) == 0, f"{name}: {len(over)} rows exceed plausible bound for {col} (> {bound})")
-
-
 def verify_referential_integrity(name: str, df: pd.DataFrame, player_ids: set[int]) -> None:
     missing = set(df["player_id"].unique()) - player_ids
     check(len(missing) == 0, f"{name}: {len(missing)} player_ids not present in players.parquet")
@@ -117,7 +85,7 @@ def verify_made_le_attempted(name: str, df: pd.DataFrame, made_col: str, att_col
 
 
 def verify_oreb_dreb_sum_to_reb(
-    name: str, df: pd.DataFrame, suffix: str, careers_fully_in_tracking_era: pd.Series
+    name: str, df: pd.DataFrame, careers_fully_in_tracking_era: pd.Series
 ) -> None:
     """oreb+dreb should equal reb exactly -- but only for a player whose
     *entire* career falls within the OREB/DREB tracking era (1973-74+).
@@ -129,47 +97,22 @@ def verify_oreb_dreb_sum_to_reb(
     rebounds. `careers_fully_in_tracking_era` (indexed by player_id)
     restricts the check to players it can't produce a false positive for.
     """
-    oreb_col, dreb_col, reb_col = f"oreb{suffix}", f"dreb{suffix}", f"reb{suffix}"
-    if not all(c in df.columns for c in (oreb_col, dreb_col, reb_col)):
+    if not all(c in df.columns for c in ("oreb_total", "dreb_total", "reb_total")):
         return
     eligible_ids = careers_fully_in_tracking_era[careers_fully_in_tracking_era].index
     both = df[
         df["player_id"].isin(eligible_ids)
-        & df[oreb_col].notna()
-        & df[dreb_col].notna()
-        & df[reb_col].notna()
+        & df["oreb_total"].notna()
+        & df["dreb_total"].notna()
+        & df["reb_total"].notna()
     ]
-    diff = (both[oreb_col] + both[dreb_col] - both[reb_col]).abs()
+    diff = (both["oreb_total"] + both["dreb_total"] - both["reb_total"]).abs()
     bad = both[diff > 1e-6]
     check(
         len(bad) == 0,
         f"{name}: {len(bad)} rows (careers fully within 1973-74+) where "
-        f"{oreb_col}+{dreb_col} != {reb_col}",
+        "oreb_total+dreb_total != reb_total",
     )
-
-
-def verify_per_game_reconciles_with_total(
-    name: str, df: pd.DataFrame, always_tracked_stats: list[str]
-) -> None:
-    """total/gp should equal the stored per-game value, for stats tracked
-    the league's entire history. Era-gated stats are deliberately excluded:
-    their per-game denominator is tracked-seasons-only games, not blanket
-    career gp (see build_dataset.py), so this exact check doesn't apply to
-    them -- that distinction is exactly the bug scripts/audit_answers.py
-    caught previously; this check guards the always-tracked stats where
-    the two really must agree."""
-    for stat_key in always_tracked_stats:
-        total_col, pg_col = f"{stat_key}_total", f"{stat_key}_per_game"
-        if total_col not in df.columns or pg_col not in df.columns:
-            continue
-        both = df[df[total_col].notna() & df[pg_col].notna() & (df["gp"] > 0)]
-        recomputed = both[total_col] / both["gp"]
-        diff = (recomputed - both[pg_col]).abs()
-        bad = both[diff > 1e-4]
-        check(
-            len(bad) == 0,
-            f"{name}: {len(bad)} rows where {pg_col} doesn't reconcile with {total_col}/gp",
-        )
 
 
 def print_top5(df: pd.DataFrame, col: str, label: str) -> None:
@@ -186,62 +129,43 @@ def print_top5(df: pd.DataFrame, col: str, label: str) -> None:
 def main() -> None:
     print("Loading parquet files...")
     career_totals = pd.read_parquet(DATA_PATH / "career_totals.parquet")
-    career_per_game = pd.read_parquet(DATA_PATH / "career_per_game.parquet")
     players = pd.read_parquet(DATA_PATH / "players.parquet")
 
     total_cols = [f"{k}_total" for k in STATS]
-    per_game_cols = [f"{k}_per_game" for k in STATS if STATS[k].per_game_col is not None]
-    always_tracked_stats = [k for k, v in STATS.items() if v.tracked_since is None]
 
     print("\n=== identity & duplicates ===")
     verify_identity("players", players)
     verify_no_dup_player_id("players", players)
     verify_no_dup_player_id("career_totals", career_totals)
-    verify_no_dup_player_id("career_per_game", career_per_game)
 
     print("\n=== games played ===")
     verify_games_played("career_totals", career_totals)
-    verify_games_played("career_per_game", career_per_game)
 
     print("\n=== numeric dtypes ===")
     verify_numeric_dtypes("career_totals", career_totals, total_cols + ["gp"])
-    verify_numeric_dtypes("career_per_game", career_per_game, per_game_cols + ["gp"])
 
-    print("\n=== monotonic ranks (career totals) ===")
+    print("\n=== monotonic ranks ===")
     verify_monotonic_ranks("career_totals", career_totals, total_cols)
-
-    print("\n=== plausible per-game bounds ===")
-    verify_per_game_bounds("career_per_game", career_per_game, "_per_game")
-
-    print("\n=== per-game reconciles with total/gp (always-tracked stats) ===")
-    verify_per_game_reconciles_with_total("career_per_game", career_per_game, always_tracked_stats)
 
     print("\n=== made <= attempted ===")
     for made, att in [("fgm", "fga"), ("fg3m", "fg3a"), ("ftm", "fta")]:
         verify_made_le_attempted("career_totals", career_totals, f"{made}_total", f"{att}_total")
-        verify_made_le_attempted(
-            "career_per_game", career_per_game, f"{made}_per_game", f"{att}_per_game"
-        )
 
     print("\n=== offensive + defensive rebounds = total rebounds (careers fully in tracking era) ===")
-    fully_tracked = (
-        players.set_index("player_id")["first_season"].fillna("") >= "1973-74"
-    )
-    verify_oreb_dreb_sum_to_reb("career_totals", career_totals, "_total", fully_tracked)
-    verify_oreb_dreb_sum_to_reb("career_per_game", career_per_game, "_per_game", fully_tracked)
+    fully_tracked = players.set_index("player_id")["first_season"].fillna("") >= "1973-74"
+    verify_oreb_dreb_sum_to_reb("career_totals", career_totals, fully_tracked)
 
     print("\n=== referential integrity ===")
     player_ids = set(players["player_id"].unique())
     verify_referential_integrity("career_totals", career_totals, player_ids)
-    verify_referential_integrity("career_per_game", career_per_game, player_ids)
 
-    print("\n=== eyeball: top 5 by career points, career rebounds/game, career assists/game ===")
+    print("\n=== eyeball: top 5 by career points, rebounds, assists ===")
     print("-- career points --")
     print_top5(career_totals.merge(players, on="player_id"), "pts_total", "pts")
-    print("-- career rebounds per game --")
-    print_top5(career_per_game.merge(players, on="player_id"), "reb_per_game", "reb")
-    print("-- career assists per game --")
-    print_top5(career_per_game.merge(players, on="player_id"), "ast_per_game", "ast")
+    print("-- career rebounds --")
+    print_top5(career_totals.merge(players, on="player_id"), "reb_total", "reb")
+    print("-- career assists --")
+    print_top5(career_totals.merge(players, on="player_id"), "ast_total", "ast")
 
     print(f"\n{'='*60}")
     if failures:

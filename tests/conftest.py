@@ -22,8 +22,8 @@ ERA_UNTRACKED_STATS = {"oreb", "dreb", "stl", "blk", "tov", "fg3m", "fg3a"}
 # yet is null, exactly like the real API returns for that era.
 OLD_TIMER_ID = 8
 
-# Players 7 and 8 have short careers (gp below the default career per-game
-# floor of 400) to exercise min-games eligibility filtering.
+# Players 7 and 8 have short careers (few games played) to exercise
+# min-games eligibility filtering.
 SHORT_CAREER_IDS = {7, 8}
 
 PLAYER_IDS = list(range(1, 9))
@@ -43,17 +43,6 @@ def _totals_row(player_id: int) -> dict:
     return row
 
 
-def _per_game_row(player_id: int) -> dict:
-    gp = 200 if player_id in SHORT_CAREER_IDS else 1000
-    row: dict = {"player_id": player_id, "gp": gp}
-    for idx, key in enumerate(STAT_KEYS):
-        if player_id == OLD_TIMER_ID and key in ERA_UNTRACKED_STATS:
-            row[f"{key}_per_game"] = None
-        else:
-            row[f"{key}_per_game"] = round((9 - player_id) * 1.0 + idx * 0.01, 3)
-    return row
-
-
 @pytest.fixture
 def tables() -> DataTables:
     players = pd.DataFrame(
@@ -67,24 +56,10 @@ def tables() -> DataTables:
         }
     )
     career_totals = pd.DataFrame([_totals_row(pid) for pid in PLAYER_IDS])
-    career_per_game = pd.DataFrame([_per_game_row(pid) for pid in PLAYER_IDS])
-    return DataTables(
-        career_totals=career_totals,
-        career_per_game=career_per_game,
-        players=players,
-    )
+    return DataTables(career_totals=career_totals, players=players)
 
 
 @pytest.fixture
 def small_game_config() -> GameConfig:
-    """A GameConfig whose thresholds fit the 8-player fixture above.
-
-    The real default (400 career games) would filter out every synthetic
-    player, since the fixture only has 8 rows total. Rank range is
-    similarly narrowed to what the fixture supports.
-    """
-    return GameConfig(
-        career_per_game_min_games=400,  # players 7-8 (gp=200) intentionally excluded
-        career_total_ranks=RankRange(low=1, high=8, skew=1.0),
-        career_per_game_ranks=RankRange(low=1, high=8, skew=1.0),
-    )
+    """A GameConfig whose rank range fits the 8-player fixture above."""
+    return GameConfig(career_total_ranks=RankRange(low=1, high=8, skew=1.0))

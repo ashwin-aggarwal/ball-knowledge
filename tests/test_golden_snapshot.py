@@ -56,11 +56,7 @@ def test_top25_matches_golden_snapshot(real_tables) -> None:
         scope = DatasetScope(scope_value)
         dataset_config = config.dataset_config(scope)
         stat_def = STATS[stat_key]
-        value_col = (
-            stat_def.totals_col
-            if dataset_config.value_kind.value == "total"
-            else stat_def.per_game_col
-        )
+        value_col = stat_def.totals_col
         table = real_tables.stat_table(scope)
         pool = eligible_pool(
             table, real_tables.players, value_col=value_col, min_games=dataset_config.min_games

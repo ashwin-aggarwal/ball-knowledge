@@ -22,7 +22,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ball_knowledge.config import DATA_DIR, DEFAULT_GAME_CONFIG  # noqa: E402
+from ball_knowledge.config import DATA_DIR  # noqa: E402
 
 DATA_PATH = Path(DATA_DIR)
 TOP_N = 50
@@ -43,22 +43,15 @@ STAT_API_COL = {
 }
 
 # (our table file, our value column suffix, AllTimeLeadersGrids per_mode_simple,
-#  min career games floor to apply before ranking OUR side -- must match
-#  the same eligibility filter the real game applies, or short-career
-#  high-average players (e.g. a rookie phenom) falsely appear as
-#  "mismatches" against an official list that itself applies a
-#  qualification floor).
+#  min career games floor -- 1 here since career totals has no floor).
 CHECKED_SCOPES = [
     ("career_totals.parquet", "_total", "Totals", 1),
-    ("career_per_game.parquet", "_per_game", "PerGame", DEFAULT_GAME_CONFIG.career_per_game_min_games),
 ]
 
-# Both remaining scopes (career totals, career per-game) are checked
-# above. All-time career stats only means there's no single-season scope
-# left to leave unverified; kept as a list (rather than removed) so a
-# future scope this script can't check against a live source (e.g. a
-# derived template) has an obvious place to be declared, loudly, rather
-# than silently skipped.
+# The only scope (career totals) is checked above. Kept as a list (rather
+# than removed) so a future scope this script can't check against a live
+# source has an obvious place to be declared, loudly, rather than
+# silently skipped.
 UNVERIFIED_SCOPES: list[tuple[str, str]] = []
 
 
