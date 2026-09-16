@@ -94,8 +94,16 @@ class GameConfig:
     min_players: int = 1  # solo play is supported: your closest (only) guess always scores
     max_players: int = 8
     default_rounds: int = 10
-    round_points: int = 1
-    exact_match_bonus_points: int = 2  # total awarded for an exact match
+
+    # GeoGuessr-style per-guess scoring (see scoring.py for the curve and
+    # the local-rank-density normalizer that makes these units comparable
+    # across every stat and scope). Tune TAU only by reading
+    # scripts/calibrate_scoring.py's output, not by feel.
+    max_round_score: int = 1000
+    min_round_score: int = 25  # floor for any guess drawn from the eligible pool
+    closest_bonus: int = 25  # flat bonus for the round's closest guess(es); 0 disables it
+    score_tau: float = 12.0
+    score_window_radius: int = 25  # rank-window radius for the density normalizer
 
     career_total_ranks: RankRange = field(
         default_factory=lambda: RankRange(low=1, high=300)

@@ -1,9 +1,13 @@
 {
-  "built_at": "2026-09-16T05:00:48.033635+00:00",
-  "candidate_pool_size": 1246,
+  "built_at": "2026-09-16T22:02:50.241527+00:00",
+  "candidate_pool_size": 1573,
+  "candidate_pool_sources": {
+    "all_time_leaders_top_x": 1246,
+    "currently_active": 530
+  },
   "row_counts": {
-    "career_totals": 1245,
-    "players": 1245
+    "career_totals": 1567,
+    "players": 1567
   },
   "season_coverage": {
     "min_season": "1946-47",
@@ -23,7 +27,7 @@
     "fg3m": "Three pointers made have been tracked since 1979-80.",
     "fg3a": "Three pointers attempted have been tracked since 1979-80."
   },
-  "network_calls": 0,
+  "network_calls": 327,
   "cache_hits": 1247,
   "permanent_failures": []
 }

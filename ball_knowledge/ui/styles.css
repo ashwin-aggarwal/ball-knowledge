@@ -356,6 +356,11 @@
   color: var(--bk-ink);
   margin-bottom: 2px;
 }
+.bk-guess-raw-miss {
+  font-size: 0.68rem;
+  color: var(--bk-ink);
+  opacity: 0.75;
+}
 .bk-guess-diff {
   font-size: 0.72rem;
   color: var(--bk-ink-teal);
@@ -374,23 +379,36 @@
   color: var(--bk-ink);
 }
 
-/* ---------- Handoff gate: quiet, full-bleed ---------- */
-.bk-gate {
-  text-align: center;
-  padding: 3rem 1rem 2rem;
+/* ---------- Lineup sheet (collect screen) ----------
+   A printed lineup/entry sheet: one ruled row per player, name in the
+   nameplate face on the left, a native searchable selectbox on the
+   right. `st.container(key=...)` gives each row a real DOM node
+   Streamlit itself owns (unlike the raw-HTML card pieces above), so it
+   can safely wrap native widgets -- targeted here via the "st-key-"
+   class Streamlit stamps on it. Padding is kept tight so 8 rows plus
+   the submit button still fit a laptop viewport without scrolling. */
+div[class*="st-key-bk_lineup_row_"] {
+  border-bottom: 2px dashed rgba(236, 224, 187, 0.35);
+  padding: 6px 2px;
 }
-.bk-gate-label {
-  font-size: 0.85rem;
-  letter-spacing: 0.05em;
-  color: var(--bk-card-stock);
-  opacity: 0.7;
+div[class*="st-key-bk_lineup_row_"] [data-testid="stVerticalBlockBorderWrapper"] {
+  border: none;
 }
-.bk-gate-name {
+.bk-lineup-name {
   font-family: var(--bk-font-display);
-  font-size: 2.5rem;
+  font-size: 1.05rem;
   color: var(--bk-card-stock);
-  margin: 8px 0 20px;
-  line-height: 1.1;
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  min-height: 2.6rem;
+}
+.bk-lineup-blank-note {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--bk-ink-gold);
+  margin: 6px 0 2px;
 }
 
 /* ---------- Scoreboard ---------- */

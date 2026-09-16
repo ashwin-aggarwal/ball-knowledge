@@ -10,8 +10,6 @@ from ball_knowledge.config import DEFAULT_GAME_CONFIG
 from ball_knowledge.data import (
     eligible_players_for_question,
     leaderboard_neighbors,
-    resolve_guess_value_and_rank,
-    resolve_player_by_name,
 )
 from ball_knowledge.scoring import GuessInput
 from ball_knowledge.state import Phase
@@ -67,55 +65,60 @@ def render_round_intro() -> None:
 
 
 def render_collect() -> None:
+    """One screen, every player at once. Guesses are not secret and can
+    be changed freely until "Reveal answers" is pressed. Each row's
+    selectbox is keyed by (round, player name) -- stable across reruns
+    regardless of row order, and naturally fresh each round since the
+    eligible pool (and therefore the valid option set) changes every
+    round.
+    """
     ss = st.session_state
-    if ss.collect_gate_shown:
-        components.render_handoff_gate(state.current_guesser())
-        st.write("Nobody else should see the next screen.")
-        _, mid, _ = st.columns([1, 1, 1])
-        with mid:
-            if st.button("I'm ready", width="stretch"):
-                state.show_guess_input()
-                st.rerun()
-        return
-
     q = ss.current_question
-    guesser = state.current_guesser()
-    st.markdown(f"#### {guesser}'s guess")
+    st.markdown(f"#### Round {ss.current_round} / {ss.num_rounds}")
     components.render_card_back(q.question_text, q.era_caveat)
-    st.caption("Type any player below.")
-    # Keying by (collect_index, clear_nonce) guarantees a fresh widget for
-    # each guesser's turn and for each "Clear" click, since Streamlit
-    # forbids reassigning a widget's session_state value after it has
-    # already been instantiated in the same script run.
-    text_key = f"guess_text_{ss.collect_index}_{ss.guess_clear_nonce}"
-    typed_name = st.text_input(
-        "Who do you think it is?", key=text_key, placeholder="e.g. LeBron James"
-    )
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Clear", disabled=not typed_name, width="stretch"):
-            ss.guess_clear_nonce += 1
+
+    pool = eligible_players_for_question(q, state.tables())
+    options = sorted(pool["full_name"].tolist())
+    by_name = {row.full_name: row for row in pool.itertuples()}
+
+    blank_players: list[str] = []
+    selections: dict[str, str | None] = {}
+    for i, player in enumerate(ss.players):
+        with st.container(key=f"bk_lineup_row_{i}"):
+            name_col, input_col = st.columns([1, 2])
+            with name_col:
+                st.markdown(f'<div class="bk-lineup-name">{player}</div>', unsafe_allow_html=True)
+            with input_col:
+                selected = st.selectbox(
+                    player,
+                    options,
+                    index=None,
+                    key=f"guess_select_r{ss.current_round}_{player}",
+                    placeholder="Search for a player...",
+                    label_visibility="collapsed",
+                )
+        selections[player] = selected
+        if not selected:
+            blank_players.append(player)
+
+    if blank_players:
+        components.render_blank_note(blank_players)
+
+    _, mid, _ = st.columns([1, 1, 1])
+    with mid:
+        if st.button("Reveal answers", disabled=bool(blank_players), width="stretch"):
+            guesses = {}
+            for player, name in selections.items():
+                row = by_name[name]
+                guesses[player] = GuessInput(
+                    guesser_name=player,
+                    nba_player_id=int(row.player_id),
+                    nba_player_name=name,
+                    value=float(row.value),
+                    rank=int(row.rank),
+                )
+            state.submit_guesses(guesses)
             st.rerun()
-    with col2:
-        if st.button("Confirm guess", disabled=not typed_name, width="stretch"):
-            match = resolve_player_by_name(typed_name, state.tables().players)
-            if match is None:
-                st.error(
-                    f"No player found named \"{typed_name}\". Check the spelling and try again."
-                )
-            else:
-                value, rank = resolve_guess_value_and_rank(
-                    int(match["player_id"]), q, state.tables()
-                )
-                guess = GuessInput(
-                    guesser_name=guesser,
-                    nba_player_id=int(match["player_id"]),
-                    nba_player_name=str(match["full_name"]),
-                    value=value,
-                    rank=rank,
-                )
-                state.confirm_guess(guess)
-                st.rerun()
 
 
 def render_reveal() -> None:
@@ -129,9 +132,7 @@ def render_reveal() -> None:
         rank_display=f"#{q.target_rank}",
     )
     components.render_guesses_label()
-    components.render_guess_strip(
-        scored, scoring_mode=q.scoring_mode, value_display_fmt=VALUE_FMT, target_rank=q.target_rank
-    )
+    components.render_guess_strip(scored, stat_label=q.stat_label, value_display_fmt=VALUE_FMT)
     _, mid, _ = st.columns([1, 1, 1])
     with mid:
         if st.button("See scoreboard", width="stretch"):
@@ -153,11 +154,16 @@ def render_reveal() -> None:
         )
 
 
+def _max_possible_score() -> int:
+    ss = st.session_state
+    return ss.num_rounds * ss.game_config.max_round_score
+
+
 def render_scoreboard() -> None:
     ss = st.session_state
     st.markdown("#### Scoreboard")
     ranked = sorted(ss.scores.items(), key=lambda kv: -kv[1])
-    components.render_scoreboard(ranked)
+    components.render_scoreboard(ranked, max_possible=_max_possible_score())
     label = "Next round" if ss.current_round < ss.num_rounds else "See final results"
     _, mid, _ = st.columns([1, 1, 1])
     with mid:
@@ -170,7 +176,7 @@ def render_game_over() -> None:
     ss = st.session_state
     st.markdown("#### Game over!")
     ranked = sorted(ss.scores.items(), key=lambda kv: -kv[1])
-    components.render_scoreboard(ranked)
+    components.render_scoreboard(ranked, max_possible=_max_possible_score())
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Play again", width="stretch"):

@@ -2,6 +2,12 @@
 
 LOBBY -> ROUND_INTRO -> COLLECT -> REVEAL -> SCOREBOARD -> (ROUND_INTRO | GAME_OVER)
 
+Guesses are not secret: every player enters on one COLLECT screen at the
+same time (see app.py's render_collect), and any guess can be changed
+freely until the round is submitted. COLLECT is a single render, not a
+loop over players -- there is no per-player cursor and nothing to pass
+the laptop for.
+
 Every function here mutates st.session_state directly rather than
 returning new state, matching Streamlit's rerun-the-whole-script model:
 each user action calls one of these, then the script reruns and the
@@ -16,7 +22,7 @@ from typing import Any
 import streamlit as st
 
 from ball_knowledge.config import DEFAULT_GAME_CONFIG, GameConfig
-from ball_knowledge.data import cached_load_tables
+from ball_knowledge.data import cached_load_tables, eligible_players_for_question
 from ball_knowledge.questions import DataTables, Question, generate_question
 from ball_knowledge.scoring import GuessInput, ScoredGuess, score_round
 
@@ -42,9 +48,6 @@ def init_state() -> None:
     ss.setdefault("recent_stats", [])
     ss.setdefault("recent_scopes", [])
     ss.setdefault("current_question", None)
-    ss.setdefault("collect_index", 0)
-    ss.setdefault("collect_gate_shown", True)
-    ss.setdefault("guess_clear_nonce", 0)
     ss.setdefault("guesses", {})
     ss.setdefault("last_scored", [])
     ss.setdefault("checkpoint", None)
@@ -85,10 +88,6 @@ def _start_new_round() -> None:
     ss.used_question_keys.add(ss.current_question.key)
     ss.recent_stats.append(ss.current_question.stat_key)
     ss.recent_scopes.append(ss.current_question.scope.value)
-    ss.collect_index = 0
-    # Solo play has no one to hand the laptop to, so skip the gate screen.
-    ss.collect_gate_shown = len(ss.players) > 1
-    ss.guess_clear_nonce = 0
     ss.guesses = {}
     ss.last_scored = []
     ss.phase = Phase.ROUND_INTRO
@@ -98,34 +97,46 @@ def begin_collecting() -> None:
     st.session_state.phase = Phase.COLLECT
 
 
-def current_guesser() -> str:
+def eligible_pool_for_current_question() -> Any:
+    """The current question's eligible-players table (a DataFrame): the
+    single source both the COLLECT screen's selectbox options and the
+    scoring normalizer are built from, so a guess can never be outside
+    what was offered."""
     ss = st.session_state
-    return ss.players[ss.collect_index]
+    q: Question = ss.current_question
+    return eligible_players_for_question(q, tables())
 
 
-def show_guess_input() -> None:
-    st.session_state.collect_gate_shown = False
+def submit_guesses(guesses: dict[str, GuessInput]) -> None:
+    """Record every player's guess at once and move to REVEAL.
 
-
-def confirm_guess(guess: GuessInput) -> None:
+    Called once, from the COLLECT screen's single "Reveal answers"
+    button -- by the time this runs every player already has a
+    non-empty guess (the button is disabled until then), so this never
+    partially advances the way the old per-player confirm_guess did.
+    """
     ss = st.session_state
-    ss.guesses[guess.guesser_name] = guess
-    ss.collect_index += 1
-    ss.collect_gate_shown = True
-    if ss.collect_index >= len(ss.players):
-        ss.phase = Phase.REVEAL
+    ss.guesses = dict(guesses)
+    ss.phase = Phase.REVEAL
 
 
 def reveal_and_score() -> list[ScoredGuess]:
     """Score the round (idempotent: safe to call on every REVEAL rerun)."""
     ss = st.session_state
     q: Question = ss.current_question
+    pool = eligible_pool_for_current_question()
+    answer_value = q.anchor_value if q.scoring_mode == "value" else q.answer_value
     scored = score_round(
         list(ss.guesses.values()),
-        q.target_rank,
-        answer_value=q.anchor_value if q.scoring_mode == "value" else None,
-        round_points=ss.game_config.round_points,
-        exact_match_bonus_points=ss.game_config.exact_match_bonus_points,
+        pool=pool,
+        target_rank=q.target_rank,
+        answer_value=answer_value,
+        answer_player_id=q.answer_player_id,
+        max_round_score=ss.game_config.max_round_score,
+        min_round_score=ss.game_config.min_round_score,
+        closest_bonus=ss.game_config.closest_bonus,
+        tau=ss.game_config.score_tau,
+        window=ss.game_config.score_window_radius,
     )
     ss.last_scored = scored
     return scored

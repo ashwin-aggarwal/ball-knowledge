@@ -158,6 +158,12 @@ def render_leaderboard_neighbors(
     )
 
 
+def render_blank_note(blank_players: list[str]) -> None:
+    """Names which rows on the collect screen are still empty, since the
+    submit button is disabled with no other explanation for why."""
+    _markdown(f'<div class="bk-lineup-blank-note">Still waiting on: {", ".join(blank_players)}</div>')
+
+
 def render_guesses_label() -> None:
     """Centered, bold, underlined "Guesses:" label under the reveal card."""
     _markdown('<div class="bk-guesses-label">Guesses:</div>')
@@ -166,52 +172,58 @@ def render_guesses_label() -> None:
 def render_guess_strip(
     scored: list[ScoredGuess],
     *,
-    scoring_mode: str = "rank",
+    stat_label: str,
     value_display_fmt: str = ",.0f",
-    target_rank: int | None = None,
 ) -> None:
-    """Every guess as a headshot with the guesser's name below, closest first.
+    """Every guess as a card: points, raw miss, normalized miss, own rank.
 
-    The displayed gap is always in leaderboard spots (|guess.rank -
-    target_rank|), regardless of `scoring_mode` -- even for value_anchor,
-    where the round is actually *won* by value distance to the anchor
-    (that's what `s.diff`/`s.points` reflect), the label reads in rank
-    terms for consistency with every other question type. `target_rank`
-    is required to compute that for value-mode questions; rank-mode
-    questions already carry it via `s.diff` directly. Every card also
-    shows the guessed player's own rank and stat total, regardless of
-    scoring mode, so a guess is legible on its own terms even when it
-    didn't win the round. `value_display_fmt` is a format-spec (e.g.
-    ",.0f" for totals) applied to that value. The closest guess(es) --
-    the round's actual winner(s) by the real scoring rule, ties included
-    -- get a subtle green card background.
+    Reads the way GeoGuessr shows a round result -- for each guess: the
+    points it earned (prominent), the raw value miss in the stat's own
+    units ("off by 1,840 rebounds"), the same miss normalized into
+    leaderboard terms ("about 9 spots off" -- `s.normalized_error`,
+    already in that unit for every template, rank-based or value-based,
+    thanks to the local-density normalizer in scoring.py), and the
+    guessed player's own rank/value so a guess is legible on its own
+    terms even when it didn't win the round. The round's closest guess(es)
+    (`s.is_closest`, ties included) get a subtle green card background;
+    an exact correct-player guess (`s.is_exact`) gets a red-bordered card
+    and skips the miss lines entirely, since there's nothing to report.
     """
-    min_diff = min((s.diff for s in scored), default=None)
     cards = []
     for s in scored:
         photo_html = _photo_html(s.nba_player_id, s.nba_player_name, css_class="bk-guess-photo")
-        rank_gap = abs(s.rank - target_rank) if (scoring_mode == "value" and target_rank is not None) else s.diff
         variant = ""
-        if min_diff is not None and s.diff == min_diff:
+        if s.is_closest:
             variant += " bk-guess-card--closest"
-        if rank_gap == 0:
+        if s.is_exact:
             variant += " bk-guess-card--exact"
-        if rank_gap == 0:
-            diff_label = "exact match"
-        else:
-            spot_word = "spot" if rank_gap == 1 else "spots"
-            diff_label = f"{rank_gap:g} {spot_word} off"
+
         if s.value is not None:
             stat_line = f"#{s.rank} · {format(s.value, value_display_fmt)}"
         else:
             stat_line = "not on this leaderboard"
+
+        if s.is_exact:
+            miss_html = '<div class="bk-guess-diff">exact match</div>'
+        elif s.raw_diff is not None:
+            raw_miss = f"off by {format(s.raw_diff, value_display_fmt)} {stat_label.lower()}"
+            spots = round(s.normalized_error)
+            spot_word = "spot" if spots == 1 else "spots"
+            norm_miss = f"about {spots:g} {spot_word} off"
+            miss_html = (
+                f'<div class="bk-guess-raw-miss">{raw_miss}</div>'
+                f'<div class="bk-guess-diff">{norm_miss}</div>'
+            )
+        else:
+            miss_html = ""
+
         cards.append(
             f"""
             <div class="bk-guess-card{variant}">
               {photo_html}
               <div class="bk-guess-player">{s.nba_player_name}</div>
               <div class="bk-guess-stat-line">{stat_line}</div>
-              <div class="bk-guess-diff">{diff_label}</div>
+              {miss_html}
               <div class="bk-guess-points">+{s.points}</div>
               <div class="bk-guess-name">{s.guesser_name}</div>
             </div>
@@ -220,24 +232,18 @@ def render_guess_strip(
     _markdown(f'<div class="bk-guess-strip">{"".join(cards)}</div>')
 
 
-def render_handoff_gate(name: str) -> None:
-    _markdown(
-        f"""
-        <div class="bk-gate">
-          <div class="bk-gate-label">Pass the laptop to</div>
-          <div class="bk-gate-name">{name}</div>
-        </div>
-        """
-    )
-
-
-def render_scoreboard(ranked: list[tuple[str, int]]) -> None:
+def render_scoreboard(ranked: list[tuple[str, int]], *, max_possible: int) -> None:
+    """Each player's running total against the game's theoretical maximum
+    (`num_rounds * max_round_score`), e.g. "3,420 / 8,000" -- a printed
+    score column, not a progress bar, so a mediocre game reads as visibly
+    mediocre rather than a nearly-full bar regardless of how it's going.
+    """
     rows = "".join(
         f"""
         <div class="bk-scoreboard-row">
           <span class="bk-scoreboard-rank">{i}</span>
           <span class="bk-scoreboard-name">{name}</span>
-          <span class="bk-scoreboard-score">{score}</span>
+          <span class="bk-scoreboard-score">{score:,} / {max_possible:,}</span>
         </div>
         """
         for i, (name, score) in enumerate(ranked, start=1)
