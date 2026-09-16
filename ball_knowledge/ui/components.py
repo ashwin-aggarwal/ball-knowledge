@@ -208,8 +208,17 @@ def render_guess_strip(
         elif s.raw_diff is not None:
             raw_miss = f"off by {format(s.raw_diff, value_display_fmt)} {stat_label.lower()}"
             spots = round(s.normalized_error)
-            spot_word = "spot" if spots == 1 else "spots"
-            norm_miss = f"about {spots:g} {spot_word} off"
+            # Deliberately not "N spots off" -- s.normalized_error is a
+            # value gap measured against the *local* density of this
+            # leaderboard neighborhood, not a literal rank count, and
+            # those two diverge exactly where it matters most: near the
+            # top of a leaderboard, where consecutive superstars are far
+            # apart in value, a small literal rank gap can be "worth"
+            # many typical ranks' worth of production. Wording it as a
+            # literal spot count reads as simply wrong when a player can
+            # see the actual (small) rank gap in the sidebar.
+            rank_word = "rank" if spots == 1 else "ranks"
+            norm_miss = f"worth about {spots:g} {rank_word} here"
             miss_html = (
                 f'<div class="bk-guess-raw-miss">{raw_miss}</div>'
                 f'<div class="bk-guess-diff">{norm_miss}</div>'
@@ -232,18 +241,14 @@ def render_guess_strip(
     _markdown(f'<div class="bk-guess-strip">{"".join(cards)}</div>')
 
 
-def render_scoreboard(ranked: list[tuple[str, int]], *, max_possible: int) -> None:
-    """Each player's running total against the game's theoretical maximum
-    (`num_rounds * max_round_score`), e.g. "3,420 / 8,000" -- a printed
-    score column, not a progress bar, so a mediocre game reads as visibly
-    mediocre rather than a nearly-full bar regardless of how it's going.
-    """
+def render_scoreboard(ranked: list[tuple[str, int]]) -> None:
+    """Each player's running total, as a printed score column."""
     rows = "".join(
         f"""
         <div class="bk-scoreboard-row">
           <span class="bk-scoreboard-rank">{i}</span>
           <span class="bk-scoreboard-name">{name}</span>
-          <span class="bk-scoreboard-score">{score:,} / {max_possible:,}</span>
+          <span class="bk-scoreboard-score">{score:,}</span>
         </div>
         """
         for i, (name, score) in enumerate(ranked, start=1)

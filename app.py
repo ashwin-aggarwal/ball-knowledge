@@ -154,16 +154,11 @@ def render_reveal() -> None:
         )
 
 
-def _max_possible_score() -> int:
-    ss = st.session_state
-    return ss.num_rounds * ss.game_config.max_round_score
-
-
 def render_scoreboard() -> None:
     ss = st.session_state
     st.markdown("#### Scoreboard")
     ranked = sorted(ss.scores.items(), key=lambda kv: -kv[1])
-    components.render_scoreboard(ranked, max_possible=_max_possible_score())
+    components.render_scoreboard(ranked)
     label = "Next round" if ss.current_round < ss.num_rounds else "See final results"
     _, mid, _ = st.columns([1, 1, 1])
     with mid:
@@ -176,7 +171,7 @@ def render_game_over() -> None:
     ss = st.session_state
     st.markdown("#### Game over!")
     ranked = sorted(ss.scores.items(), key=lambda kv: -kv[1])
-    components.render_scoreboard(ranked, max_possible=_max_possible_score())
+    components.render_scoreboard(ranked)
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Play again", width="stretch"):
