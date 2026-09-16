@@ -56,6 +56,107 @@ def test_eligible_pool_ties_share_rank_and_skip_next() -> None:
     assert ranks[3] == 3  # rank 2 is skipped after the tie
 
 
+# --- Failure-mode fixtures: designed around the bug the audit script
+# found (a rank miscomputation that was internally consistent and still
+# wrong), not around the happy path. ---
+
+
+def test_eligible_pool_ranks_numerically_not_lexicographically() -> None:
+    # As strings, "100" < "2" < "9" < "90" lexicographically -- if a rank
+    # computation ever fell back to string comparison, player 1 (value
+    # 100) would NOT come out on top. It must, since 100 is numerically
+    # the largest value here.
+    import pandas as pd
+
+    table = pd.DataFrame(
+        {
+            "player_id": [1, 2, 3, 4],
+            "gp": [100, 100, 100, 100],
+            "pts_total": [100.0, 9.0, 90.0, 2.0],
+        }
+    )
+    players = pd.DataFrame({"player_id": [1, 2, 3, 4], "full_name": ["A", "B", "C", "D"]})
+    pool = eligible_pool(table, players, value_col="pts_total", min_games=1)
+    assert list(pool["player_id"]) == [1, 3, 2, 4]
+    assert list(pool["rank"]) == [1, 2, 3, 4]
+
+
+def test_eligible_pool_raises_on_string_typed_stat_column() -> None:
+    import pandas as pd
+
+    table = pd.DataFrame(
+        {"player_id": [1, 2, 3], "gp": [100, 100, 100], "pts_total": ["100", "9", "90"]}
+    )
+    players = pd.DataFrame({"player_id": [1, 2, 3], "full_name": ["A", "B", "C"]})
+    with pytest.raises(TypeError):
+        eligible_pool(table, players, value_col="pts_total", min_games=1)
+
+
+def test_eligible_pool_tie_at_requested_rank_resolves_to_one_real_player() -> None:
+    import pandas as pd
+
+    # Two players tied at what would be rank 2.
+    table = pd.DataFrame(
+        {"player_id": [1, 2, 3, 4], "gp": [100] * 4, "pts_total": [50.0, 40.0, 40.0, 10.0]}
+    )
+    players = pd.DataFrame({"player_id": [1, 2, 3, 4], "full_name": ["A", "B", "C", "D"]})
+    pool = eligible_pool(table, players, value_col="pts_total", min_games=1)
+    at_rank_2 = pool[pool["rank"] == 2]
+    assert len(at_rank_2) == 2
+    assert set(at_rank_2["player_id"]) == {2, 3}
+    # Picking "the" answer at a tied rank (as generate_question does via
+    # .iloc[0]) must deterministically resolve to exactly one real,
+    # eligible player, not crash or silently pick something invalid.
+    answer = at_rank_2.iloc[0]
+    assert int(answer["player_id"]) in {2, 3}
+    assert answer["rank"] == 2
+
+
+def test_eligible_pool_filters_before_ranking_not_after() -> None:
+    # Player 1 has the single highest value but too few games -- if
+    # filtering ever happened after ranking instead of before, it could
+    # leave a gap at rank 1 or otherwise corrupt the eligible ranking
+    # instead of cleanly starting eligible ranks at 1 with player 2 first.
+    import pandas as pd
+
+    table = pd.DataFrame(
+        {
+            "player_id": [1, 2, 3],
+            "gp": [10, 500, 500],  # player 1 ineligible (min_games=400)
+            "pts_total": [999.0, 100.0, 50.0],
+        }
+    )
+    players = pd.DataFrame({"player_id": [1, 2, 3], "full_name": ["A", "B", "C"]})
+    pool = eligible_pool(table, players, value_col="pts_total", min_games=400)
+    assert 1 not in set(pool["player_id"])
+    assert pool.iloc[0]["player_id"] == 2
+    assert pool.iloc[0]["rank"] == 1
+    assert list(pool["rank"]) == [1, 2]
+
+
+def test_eligible_pool_output_independent_of_input_row_order() -> None:
+    import pandas as pd
+
+    base = pd.DataFrame(
+        {
+            "player_id": [1, 2, 3, 4, 5],
+            "gp": [100] * 5,
+            "pts_total": [50.0, 20.0, 80.0, 10.0, 65.0],
+        }
+    )
+    players = pd.DataFrame(
+        {"player_id": [1, 2, 3, 4, 5], "full_name": ["A", "B", "C", "D", "E"]}
+    )
+    shuffled = base.sample(frac=1.0, random_state=99).reset_index(drop=True)
+
+    pool_ordered = eligible_pool(base, players, value_col="pts_total", min_games=1)
+    pool_shuffled = eligible_pool(shuffled, players, value_col="pts_total", min_games=1)
+
+    ranks_ordered = dict(zip(pool_ordered["player_id"], pool_ordered["rank"]))
+    ranks_shuffled = dict(zip(pool_shuffled["player_id"], pool_shuffled["rank"]))
+    assert ranks_ordered == ranks_shuffled
+
+
 def test_generate_question_basic_fields(tables, small_game_config) -> None:
     rng = random.Random(0)
     q = generate_question(tables, small_game_config, used_keys=set(), rng=rng)
