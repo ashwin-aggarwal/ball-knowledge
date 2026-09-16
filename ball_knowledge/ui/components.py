@@ -132,8 +132,14 @@ def render_leaderboard_neighbors(
             f"</div>"
         )
 
+    # `above` arrives closest-first (rank descending toward the answer),
+    # which is the right contract for questions.leaderboard_neighbors --
+    # but wrong for display: the panel should read as one continuous
+    # leaderboard slice, rank ascending top to bottom throughout. Reverse
+    # just the render order here so #1 sits at the top of the "above"
+    # block and the answer's rank sits directly beneath it.
     above_html = "".join(
-        _row(r["rank"], r["full_name"], r["value"]) for _, r in above.iterrows()
+        _row(r["rank"], r["full_name"], r["value"]) for _, r in above.iloc[::-1].iterrows()
     )
     below_html = "".join(
         _row(r["rank"], r["full_name"], r["value"]) for _, r in below.iterrows()
@@ -162,36 +168,39 @@ def render_guess_strip(
     *,
     scoring_mode: str = "rank",
     value_display_fmt: str = ",.0f",
+    target_rank: int | None = None,
 ) -> None:
     """Every guess as a headshot with the guesser's name below, closest first.
 
-    `scoring_mode` matches the question's: "rank" (most templates) labels
-    the gap in leaderboard spots; "value" (value_anchor) labels it in the
-    stat's own units, since the gap there is a value distance, not a
-    position on a leaderboard. Every card also shows the guessed player's
-    own rank and stat total/average, regardless of scoring mode, so a
-    guess is legible on its own terms even when it didn't win the round.
-    `value_display_fmt` is a format-spec (e.g. ",.0f" for totals, ",.1f"
-    for per-game) applied to that value. The closest guess(es) -- the
-    round's actual winner(s), by diff, ties included -- get a subtle
-    green card background.
+    The displayed gap is always in leaderboard spots (|guess.rank -
+    target_rank|), regardless of `scoring_mode` -- even for value_anchor,
+    where the round is actually *won* by value distance to the anchor
+    (that's what `s.diff`/`s.points` reflect), the label reads in rank
+    terms for consistency with every other question type. `target_rank`
+    is required to compute that for value-mode questions; rank-mode
+    questions already carry it via `s.diff` directly. Every card also
+    shows the guessed player's own rank and stat total, regardless of
+    scoring mode, so a guess is legible on its own terms even when it
+    didn't win the round. `value_display_fmt` is a format-spec (e.g.
+    ",.0f" for totals) applied to that value. The closest guess(es) --
+    the round's actual winner(s) by the real scoring rule, ties included
+    -- get a subtle green card background.
     """
     min_diff = min((s.diff for s in scored), default=None)
     cards = []
     for s in scored:
         photo_html = _photo_html(s.nba_player_id, s.nba_player_name, css_class="bk-guess-photo")
+        rank_gap = abs(s.rank - target_rank) if (scoring_mode == "value" and target_rank is not None) else s.diff
         variant = ""
         if min_diff is not None and s.diff == min_diff:
             variant += " bk-guess-card--closest"
-        if s.is_exact:
+        if rank_gap == 0:
             variant += " bk-guess-card--exact"
-        if s.is_exact:
+        if rank_gap == 0:
             diff_label = "exact match"
-        elif scoring_mode == "value":
-            diff_label = f"off by {s.diff:,.0f}"
         else:
-            spot_word = "spot" if s.diff == 1 else "spots"
-            diff_label = f"{s.diff:g} {spot_word} off"
+            spot_word = "spot" if rank_gap == 1 else "spots"
+            diff_label = f"{rank_gap:g} {spot_word} off"
         if s.value is not None:
             stat_line = f"#{s.rank} · {format(s.value, value_display_fmt)}"
         else:
