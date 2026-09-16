@@ -39,10 +39,11 @@ runtime, so it just serves the committed data.
 All in `ball_knowledge/config.py`, on `GameConfig`:
 
 - `default_rounds` — rounds per game
-- `dataset_weights` — career totals vs. per-game mix
 - `template_weights` — straight-rank vs. value-anchor vs. obscure-stat questions
 - `marquee_stats` / `marquee_weight_share` — how often points/rebounds/assists show up vs. everything else
-- `career_total_ranks` / `career_per_game_ranks` — how deep the leaderboard goes
+- `career_total_ranks` — how deep the leaderboard goes
+- `early_rank_skew` / `late_rank_skew` — bias toward easier (shallower) ranks; 1.0 is uniform
+- `reveal_neighbor_count` — how many leaderboard neighbors show in the sidebar on reveal
 
 Run `python scripts/preview_questions.py` after changing any of these to
 see 50 sample questions and a variety breakdown before playing.
