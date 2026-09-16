@@ -421,6 +421,8 @@ def write_manifest(
     career_totals_df: pd.DataFrame,
     players_df: pd.DataFrame,
     candidate_pool_size: int,
+    leader_pool_size: int,
+    active_pool_size: int,
     stats: BuildStats,
 ) -> None:
     era_caveats = {
@@ -431,6 +433,10 @@ def write_manifest(
     manifest = {
         "built_at": datetime.now(timezone.utc).isoformat(),
         "candidate_pool_size": candidate_pool_size,
+        "candidate_pool_sources": {
+            "all_time_leaders_top_x": leader_pool_size,
+            "currently_active": active_pool_size,
+        },
         "row_counts": {
             "career_totals": len(career_totals_df),
             "players": len(players_df),
@@ -499,10 +505,22 @@ def main() -> None:
     log.info("  %d players in static list", len(static_by_id))
 
     log.info("Fetching all-time leaders pool (topx=%d)...", ALL_TIME_LEADERS_TOP_X)
-    candidate_ids = sorted(
-        fetch_candidate_pool(cache_dir, args.timeout, args.sleep, args.max_retries, stats)
-    )
-    log.info("  candidate pool: %d players", len(candidate_ids))
+    leader_ids = fetch_candidate_pool(cache_dir, args.timeout, args.sleep, args.max_retries, stats)
+    log.info("  all-time leaders pool: %d players", len(leader_ids))
+
+    # Union in every currently-active player (no network call -- is_active
+    # comes from the static list already loaded above), not just those who
+    # already rank in an all-time top-X. A guess must resolve to *any* real
+    # player (see resolve_player_by_name), not only ones deep enough into
+    # a career to lead a counting stat -- otherwise recent/young players
+    # (rookies, second-year guys) silently can't be typed in at all, even
+    # though resolve_guess_value_and_rank already handles a guess that
+    # isn't leaderboard-eligible by scoring it one spot past the pool's
+    # worst rank rather than rejecting it.
+    active_ids = {pid for pid, info in static_by_id.items() if info.get("is_active")}
+    log.info("  active players (static list): %d players", len(active_ids))
+    candidate_ids = sorted(leader_ids | active_ids)
+    log.info("  candidate pool (union): %d players", len(candidate_ids))
 
     if args.limit is not None:
         candidate_ids = candidate_ids[: args.limit]
@@ -562,6 +580,8 @@ def main() -> None:
         career_totals_df,
         players_df,
         len(candidate_ids),
+        len(leader_ids),
+        len(active_ids),
         stats,
     )
 
